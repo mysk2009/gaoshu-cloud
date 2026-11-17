@@ -254,21 +254,13 @@ async def receive_attempts(request: Request) -> dict:
         now = datetime.now().isoformat(timespec="seconds")
         accepted = 0
         skipped = 0
-        if database.backend == "sqlite":
-            statement = """
-                INSERT OR IGNORE INTO attempts_cloud
-                  (device_uuid, attempt_id, class_code, student_no, qid, correct,
-                   use_sec, error_type, ts, received_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """
-        else:
-            statement = """
-                INSERT INTO attempts_cloud
-                  (device_uuid, attempt_id, class_code, student_no, qid, correct,
-                   use_sec, error_type, ts, received_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(device_uuid, attempt_id) DO NOTHING
-            """
+        statement = """
+            INSERT INTO attempts_cloud
+              (device_uuid, attempt_id, class_code, student_no, qid, correct,
+               use_sec, error_type, ts, received_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(device_uuid, attempt_id) DO NOTHING
+        """
 
         for attempt in attempts:
             if not isinstance(attempt, dict):

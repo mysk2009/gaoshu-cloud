@@ -191,7 +191,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
               ON a.class_code = r.class_code
              AND a.student_no = r.student_no
             WHERE r.class_code = ?
-            GROUP BY r.student_no, r.real_name
+            GROUP BY r.class_code, r.student_no, r.real_name
             ORDER BY r.student_no
             """,
             (class_code,),

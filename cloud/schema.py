@@ -61,6 +61,25 @@ DDL_STATEMENTS = (
     """,
 )
 
+BACKFILL_ATTEMPTS_STUDENT_NO_SQL = """
+UPDATE attempts_cloud
+SET student_no = (
+  SELECT d.student_no
+  FROM devices AS d
+  WHERE d.device_uuid = attempts_cloud.device_uuid
+    AND d.class_code = attempts_cloud.class_code
+    AND d.student_no IS NOT NULL
+)
+WHERE (student_no IS NULL OR student_no = '')
+  AND EXISTS (
+    SELECT 1
+    FROM devices AS d
+    WHERE d.device_uuid = attempts_cloud.device_uuid
+      AND d.class_code = attempts_cloud.class_code
+      AND d.student_no IS NOT NULL
+  )
+"""
+
 
 def ensure_schema(database: Database) -> None:
     with database.transaction() as connection:
@@ -108,3 +127,18 @@ def ensure_schema(database: Database) -> None:
                 "ALTER TABLE attempts_cloud "
                 "ADD COLUMN IF NOT EXISTS student_no TEXT"
             )
+
+        backfill_cursor = database.execute(
+            connection, BACKFILL_ATTEMPTS_STUDENT_NO_SQL
+        )
+        raw_rowcount = getattr(backfill_cursor, "rowcount", None)
+        if isinstance(raw_rowcount, int) and raw_rowcount >= 0:
+            backfilled = raw_rowcount
+            suffix = ""
+        else:
+            backfilled = 0
+            suffix = " (rowcount unavailable)"
+        print(
+            f"[cloud] backfilled attempts.student_no rows={backfilled}{suffix}",
+            flush=True,
+        )
