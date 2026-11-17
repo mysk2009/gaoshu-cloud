@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: gaoshu-cloud
+    runtime: python
+    plan: free
+    region: singapore
+    branch: master
+    buildCommand: pip install -r cloud/requirements.txt
+    startCommand: uvicorn cloud.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: CLOUD_DB_URL
+        sync: false
+      - key: CLOUD_ADMIN_TOKEN
+        generateValue: true
+      - key: CLOUD_TEACHER_PASSWORD
+        sync: false
+      - key: CLOUD_SECRET_KEY
+        generateValue: true

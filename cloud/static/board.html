@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="0; url=/teacher">
+  <title>高数课堂看板</title>
+  <script>location.replace("/teacher");</script>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9e0ea;
+      --panel: #ffffff;
+      --page: #f3f6fa;
+      --brand: #2563eb;
+      --brand-dark: #1d4ed8;
+      --soft: #eaf1ff;
+      --warn: #b54708;
+    }
+    * { box-sizing: border-box; }
+    html, body { max-width: 100%; overflow-x: hidden; }
+    body {
+      margin: 0;
+      min-width: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+      line-height: 1.5;
+    }
+    button, input { font: inherit; }
+    button {
+      border: 0;
+      border-radius: 9px;
+      background: var(--brand);
+      color: #fff;
+      min-height: 40px;
+      padding: 0 16px;
+      cursor: pointer;
+    }
+    button:hover { background: var(--brand-dark); }
+    button.secondary { background: var(--soft); color: var(--brand-dark); }
+    button:disabled { cursor: default; opacity: .55; }
+    .page {
+      width: min(1120px, 100%);
+      margin: 0 auto;
+      padding: 22px 18px 42px;
+    }
+    .hero {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    h1 { margin: 0; font-size: clamp(22px, 4vw, 32px); }
+    .subtitle { color: var(--muted); margin: 4px 0 0; }
+    .auth, .class-picker {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    input {
+      min-width: 0;
+      width: 210px;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 0 12px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .notice {
+      margin: 0 0 16px;
+      padding: 10px 12px;
+      border-radius: 9px;
+      background: #fff7ed;
+      color: var(--warn);
+    }
+    .notice.hidden, .hidden { display: none !important; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .metric {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+    .metric span { display: block; color: var(--muted); font-size: 13px; }
+    .metric strong { display: block; margin-top: 4px; font-size: clamp(24px, 5vw, 34px); }
+    .grid {
+      display: grid;
+      align-items: start;
+      grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
+      gap: 16px;
+    }
+    .panel {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+    .panel.wide { grid-column: 1 / -1; }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    h2 { margin: 0; font-size: 18px; }
+    .empty {
+      margin: 0;
+      padding: 28px 12px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .missing-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .missing-list li {
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: #fff4ed;
+      color: #9a3412;
+      overflow-wrap: anywhere;
+    }
+    .table-wrap { width: 100%; min-width: 0; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td {
+      padding: 9px 8px;
+      border-bottom: 1px solid #e8edf3;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+    th { color: var(--muted); font-size: 13px; font-weight: 600; }
+    .num { text-align: right; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    @media (max-width: 760px) {
+      .hero { align-items: stretch; flex-direction: column; }
+      .auth, .class-picker { width: 100%; }
+      .auth input, .class-picker input { flex: 1 1 180px; width: auto; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid { grid-template-columns: minmax(0, 1fr); }
+      .panel.wide { grid-column: auto; }
+    }
+    @media (max-width: 600px) {
+      .page { padding: 16px 12px 32px; }
+      .panel { padding: 13px; }
+      .responsive-table thead { display: none; }
+      .responsive-table, .responsive-table tbody,
+      .responsive-table tr, .responsive-table td { display: block; width: 100%; }
+      .responsive-table tr {
+        margin-bottom: 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      .responsive-table td {
+        display: grid;
+        grid-template-columns: minmax(78px, 34%) minmax(0, 1fr);
+        gap: 8px;
+        padding: 6px 0;
+        border: 0;
+        text-align: left;
+      }
+      .responsive-table td::before {
+        content: attr(data-label);
+        color: var(--muted);
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <h1>高数课堂看板</h1>
+        <p class="subtitle">提交进度、逐人情况与讲评清单</p>
+      </div>
+      <form id="login-form" class="auth">
+        <input id="password" type="password" autocomplete="current-password" placeholder="老师口令" aria-label="老师口令" required>
+        <button type="submit">登录</button>
+      </form>
+      <form id="class-form" class="class-picker hidden">
+        <input id="class-code" type="text" autocomplete="off" placeholder="班级码，如 F34F05" aria-label="班级码">
+        <button type="submit">查看看板</button>
+        <button id="logout" class="secondary" type="button">退出</button>
+      </form>
+    </header>
+
+    <p id="notice" class="notice">输入老师口令</p>
+
+    <section id="dashboard" aria-live="polite">
+      <div class="metrics">
+        <div class="metric"><span>已交</span><strong id="submitted">0</strong></div>
+        <div class="metric"><span>名单</span><strong id="roster">0</strong></div>
+        <div class="metric"><span>未交</span><strong id="missing-count">0</strong></div>
+        <div class="metric"><span>总作答</span><strong id="attempts">0</strong></div>
+      </div>
+
+      <div class="grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>未交名单</h2>
+            <button id="copy-missing" class="secondary" type="button" disabled>复制未交名单</button>
+          </div>
+          <p id="missing-empty" class="empty">输入班级码</p>
+          <ul id="missing-list" class="missing-list"></ul>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>逐人明细</h2>
+            <button id="toggle-students" class="secondary hidden" type="button">展开全部</button>
+          </div>
+          <p id="students-empty" class="empty">输入班级码</p>
+          <div id="students-wrap" class="table-wrap hidden">
+            <table class="responsive-table">
+              <thead><tr><th>学号</th><th>姓名</th><th>已交</th><th>作答</th><th>正确率</th></tr></thead>
+              <tbody id="students-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel wide">
+          <div class="panel-head">
+            <h2>讲评清单</h2>
+            <button id="export-xlsx" type="button" disabled>导出 Excel</button>
+          </div>
+          <p id="review-empty" class="empty">输入班级码</p>
+          <div id="review-wrap" class="table-wrap hidden">
+            <table class="responsive-table">
+              <thead><tr><th>排名</th><th>题号</th><th>错人数</th><th>做题人数</th><th>错误率</th><th>平均用时</th><th>错因分布</th></tr></thead>
+              <tbody id="review-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="/static/board.js"></script>
+</body>
+</html>

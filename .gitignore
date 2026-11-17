@@ -1,0 +1,4 @@
+cloud/__pycache__/
+cloud/data/
+*.pyc
+.env
