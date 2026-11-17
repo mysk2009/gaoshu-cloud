@@ -3,9 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="0; url=/teacher">
   <title>高数课堂看板</title>
-  <script>location.replace("/teacher");</script>
   <style>
     :root {
       color-scheme: light;
@@ -79,7 +77,64 @@
       background: #fff7ed;
       color: var(--warn);
     }
+    .notice-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .notice-actions .notice { flex: 1 1 320px; margin-bottom: 0; }
     .notice.hidden, .hidden { display: none !important; }
+    .loading-skeleton { display: grid; gap: 16px; }
+    #dashboard:not(.loading) .loading-skeleton { display: none; }
+    #dashboard.loading .metrics,
+    #dashboard.loading .grid { display: none; }
+    .wake-hint {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 13px;
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      overflow-wrap: anywhere;
+    }
+    .spinner {
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      border: 2px solid #bfdbfe;
+      border-top-color: var(--brand);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .skeleton-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .skeleton-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .skeleton-block {
+      min-height: 116px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background:
+        linear-gradient(90deg, #e8edf3 25%, #f5f7fa 45%, #e8edf3 65%);
+      background-size: 240% 100%;
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+    .skeleton-block.wide { grid-column: 1 / -1; min-height: 170px; }
+    @keyframes shimmer {
+      from { background-position: 100% 0; }
+      to { background-position: -100% 0; }
+    }
     .metrics {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -156,6 +211,8 @@
       .auth, .class-picker { width: 100%; }
       .auth input, .class-picker input { flex: 1 1 180px; width: auto; }
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .skeleton-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .skeleton-grid { grid-template-columns: minmax(0, 1fr); }
       .grid { grid-template-columns: minmax(0, 1fr); }
       .panel.wide { grid-column: auto; }
     }
@@ -195,19 +252,40 @@
         <p class="subtitle">提交进度、逐人情况与讲评清单</p>
       </div>
       <form id="login-form" class="auth">
-        <input id="password" type="password" autocomplete="current-password" placeholder="老师口令" aria-label="老师口令" required>
-        <button type="submit">登录</button>
+        <input id="login-code" type="text" autocomplete="off" placeholder="班级码，如 F34F05" aria-label="班级码" required>
+        <input id="password" type="password" autocomplete="current-password" placeholder="管理口令" aria-label="管理口令" required>
+        <button id="login-submit" type="submit">进入看板</button>
       </form>
       <form id="class-form" class="class-picker hidden">
         <input id="class-code" type="text" autocomplete="off" placeholder="班级码，如 F34F05" aria-label="班级码">
-        <button type="submit">查看看板</button>
+        <button type="submit">刷新看板</button>
         <button id="logout" class="secondary" type="button">退出</button>
       </form>
     </header>
 
-    <p id="notice" class="notice">输入老师口令</p>
+    <div class="notice-actions">
+      <p id="notice" class="notice">输入班级码和管理口令</p>
+      <button id="board-retry" class="secondary hidden" type="button">重试</button>
+    </div>
 
-    <section id="dashboard" aria-live="polite">
+    <section id="dashboard" class="loading" aria-live="polite">
+      <div class="loading-skeleton" role="status" aria-label="正在加载看板">
+        <div class="wake-hint">
+          <span class="spinner" aria-hidden="true"></span>
+          <span>正在连接服务器…（免费实例首次唤醒可能需要 30–60 秒，请勿关闭页面）</span>
+        </div>
+        <div class="skeleton-metrics">
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block"></div>
+        </div>
+        <div class="skeleton-grid">
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block wide"></div>
+        </div>
+      </div>
       <div class="metrics">
         <div class="metric"><span>已交</span><strong id="submitted">0</strong></div>
         <div class="metric"><span>名单</span><strong id="roster">0</strong></div>

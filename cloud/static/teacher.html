@@ -74,6 +74,46 @@
       background: #f0fdf4;
       color: var(--good);
     }
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding: 11px 13px;
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      overflow-wrap: anywhere;
+    }
+    .connection-status.ready {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+      color: var(--good);
+    }
+    .spinner {
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      border: 2px solid #bfdbfe;
+      border-top-color: var(--brand);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    .connection-status.ready .spinner {
+      border-color: var(--good);
+      border-top-color: var(--good);
+      animation: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .notice-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .notice-row .notice { flex: 1 1 320px; margin-bottom: 0; }
     .hidden { display: none !important; }
     .panel {
       margin-bottom: 16px;
@@ -256,7 +296,15 @@
       </div>
     </header>
 
-    <p id="notice" class="notice" role="status" aria-live="polite">先填老师给你的班级码</p>
+    <div id="connection-status" class="connection-status" role="status" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="connection-text">正在连接服务器…（免费实例首次唤醒可能需要 30–60 秒，请勿关闭页面）</span>
+    </div>
+
+    <div class="notice-row">
+      <p id="notice" class="notice" role="status" aria-live="polite">先填老师给你的班级码</p>
+      <button id="retry-action" class="secondary hidden" type="button">重试</button>
+    </div>
 
     <section id="entry-section" class="panel">
       <h2>进班</h2>
@@ -270,7 +318,7 @@
           </label>
         </div>
         <div class="actions">
-          <button type="submit">进班</button>
+          <button id="entry-submit" type="submit">进班</button>
         </div>
       </form>
       <div class="create-toggle">
@@ -296,7 +344,7 @@
           </label>
         </div>
         <div class="actions">
-          <button type="submit">建班</button>
+          <button id="create-submit" type="submit">建班</button>
           <button id="hide-create" class="secondary" type="button">收起</button>
         </div>
       </form>

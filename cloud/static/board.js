@@ -8,20 +8,27 @@
     method: "方法错",
     none: "未标注",
   };
+  const REQUEST_TIMEOUT_MS = 75000;
 
   const state = {
     token: sessionStorage.getItem("teacherToken") || "",
+    classInfo: readStoredClassInfo(),
     board: null,
     showAllStudents: false,
+    retryAction: null,
   };
 
   const elements = {
     loginForm: document.getElementById("login-form"),
     classForm: document.getElementById("class-form"),
+    dashboard: document.getElementById("dashboard"),
+    loginCode: document.getElementById("login-code"),
     password: document.getElementById("password"),
+    loginSubmit: document.getElementById("login-submit"),
     classCode: document.getElementById("class-code"),
     logout: document.getElementById("logout"),
     notice: document.getElementById("notice"),
+    boardRetry: document.getElementById("board-retry"),
     submitted: document.getElementById("submitted"),
     roster: document.getElementById("roster"),
     missingCount: document.getElementById("missing-count"),
@@ -39,20 +46,65 @@
     exportXlsx: document.getElementById("export-xlsx"),
   };
 
+  function readStoredClassInfo() {
+    try {
+      return JSON.parse(sessionStorage.getItem("teacherClassInfo") || "null");
+    } catch (_) {
+      return null;
+    }
+  }
+
   function setNotice(text, visible = true) {
     elements.notice.textContent = text;
     elements.notice.classList.toggle("hidden", !visible);
   }
 
+  function showRetry(action) {
+    state.retryAction = action;
+    elements.boardRetry.classList.remove("hidden");
+  }
+
+  function clearRetry() {
+    state.retryAction = null;
+    elements.boardRetry.classList.add("hidden");
+  }
+
+  async function fetchWithTimeout(resource, options = {}) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(resource, {
+        ...options,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        const timeoutError = new Error("服务器还没醒，请点「重试」");
+        timeoutError.isTimeout = true;
+        throw timeoutError;
+      }
+      const networkError = new Error("网络连接失败，请检查网络后重试");
+      networkError.cause = error;
+      throw networkError;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   function setLoggedIn(loggedIn) {
     elements.loginForm.classList.toggle("hidden", loggedIn);
     elements.classForm.classList.toggle("hidden", !loggedIn);
-    if (!loggedIn) {
+    if (loggedIn) {
+      elements.classCode.value = state.classInfo?.class_code || "";
+    } else {
+      state.token = "";
+      state.classInfo = null;
       state.board = null;
       state.showAllStudents = false;
+      sessionStorage.removeItem("teacherToken");
+      sessionStorage.removeItem("teacherClassInfo");
       elements.classCode.value = "";
       renderDashboard();
-      setNotice("输入老师口令");
     }
   }
 
@@ -154,6 +206,7 @@
   }
 
   function renderDashboard() {
+    elements.dashboard.classList.toggle("loading", !state.board);
     const totals = state.board ? state.board.totals : {
       submitted: 0,
       roster: 0,
@@ -184,57 +237,89 @@
     return data;
   }
 
-  function resetForUnauthorized() {
-    state.token = "";
-    sessionStorage.removeItem("teacherToken");
+  function resetForUnauthorized(message = "登录已失效，请重新输入班级码和管理口令") {
     setLoggedIn(false);
-    setNotice("登录已失效，请重新输入老师口令");
+    setNotice(message);
   }
 
   async function loadBoard() {
-    const classCode = elements.classCode.value.trim();
-    if (!classCode) {
-      state.board = null;
-      renderDashboard();
-      setNotice("输入班级码");
+    if (!state.token || !state.classInfo?.class_code) {
+      resetForUnauthorized("请先输入班级码和管理口令");
       return;
     }
+    clearRetry();
+    state.board = null;
+    renderDashboard();
     setNotice("正在加载看板…");
     try {
-      const response = await fetch(`/api/board?class_code=${encodeURIComponent(classCode)}`, {
+      const response = await fetchWithTimeout("/api/board", {
         headers: { Authorization: `Bearer ${state.token}` },
       });
       state.board = await parseResponse(response);
       state.showAllStudents = false;
       renderDashboard();
       setNotice("", false);
+      clearRetry();
     } catch (error) {
       if (error.status === 401) {
         resetForUnauthorized();
       } else {
-        setNotice(error.message);
+        setNotice(error?.message || "看板加载失败，请稍后重试");
+        showRetry(loadBoard);
       }
     }
   }
 
-  elements.loginForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  async function submitLogin() {
+    const classCode = elements.loginCode.value.trim().toUpperCase();
+    if (!classCode) {
+      setNotice("先填班级码");
+      elements.loginCode.focus();
+      return;
+    }
+    const originalText = elements.loginSubmit.textContent;
+    clearRetry();
+    elements.loginSubmit.disabled = true;
+    elements.loginSubmit.textContent = "正在连接…";
     try {
-      const response = await fetch("/api/auth/login", {
+      const response = await fetchWithTimeout("/api/teacher/enter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: elements.password.value }),
+        body: JSON.stringify({
+          class_code: classCode,
+          admin_secret: elements.password.value,
+        }),
       });
       const data = await parseResponse(response);
       state.token = data.token;
+      state.classInfo = {
+        class_code: data.class_code,
+        class_name: data.class_name,
+        teacher_name: data.teacher_name || "",
+        class_secret: data.class_secret || "",
+      };
       sessionStorage.setItem("teacherToken", data.token);
+      sessionStorage.setItem(
+        "teacherClassInfo",
+        JSON.stringify(state.classInfo),
+      );
       elements.password.value = "";
       setLoggedIn(true);
-      setNotice("输入班级码");
-      elements.classCode.focus();
+      await loadBoard();
     } catch (error) {
-      setNotice(error.message);
+      setNotice(error?.message || "登录失败，请稍后重试");
+      if (error?.isTimeout) {
+        showRetry(submitLogin);
+      }
+    } finally {
+      elements.loginSubmit.disabled = false;
+      elements.loginSubmit.textContent = originalText;
     }
+  }
+
+  elements.loginForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitLogin();
   });
 
   elements.classForm.addEventListener("submit", (event) => {
@@ -243,7 +328,13 @@
   });
 
   elements.logout.addEventListener("click", () => {
-    resetForUnauthorized();
+    resetForUnauthorized("已退出，请重新输入班级码和管理口令");
+  });
+
+  elements.boardRetry.addEventListener("click", () => {
+    const action = state.retryAction;
+    clearRetry();
+    if (action) action();
   });
 
   elements.toggleStudents.addEventListener("click", () => {
@@ -279,7 +370,7 @@
     const classCode = state.board?.class_code;
     if (!classCode) return;
     try {
-      const response = await fetch(`/api/export.xlsx?class_code=${encodeURIComponent(classCode)}`, {
+      const response = await fetchWithTimeout(`/api/export.xlsx?class_code=${encodeURIComponent(classCode)}`, {
         headers: { Authorization: `Bearer ${state.token}` },
       });
       if (!response.ok) {
@@ -299,10 +390,24 @@
       link.remove();
       URL.revokeObjectURL(url);
     } catch (error) {
-      if (!error.status) setNotice(error.message);
+      if (error.status === 401) {
+        resetForUnauthorized();
+      } else if (error.status) {
+        setNotice(error.message);
+      } else {
+        setNotice(error?.message || "导出失败，请稍后重试");
+        showRetry(loadBoard);
+      }
     }
   });
 
-  setLoggedIn(Boolean(state.token));
+  if (state.token && state.classInfo) {
+    setLoggedIn(true);
+    setNotice("正在加载看板…");
+    loadBoard();
+  } else {
+    setLoggedIn(false);
+    setNotice("输入班级码和管理口令");
+  }
   renderDashboard();
 })();

@@ -257,16 +257,16 @@ async def receive_attempts(request: Request) -> dict:
         if database.backend == "sqlite":
             statement = """
                 INSERT OR IGNORE INTO attempts_cloud
-                  (device_uuid, attempt_id, class_code, qid, correct,
+                  (device_uuid, attempt_id, class_code, student_no, qid, correct,
                    use_sec, error_type, ts, received_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         else:
             statement = """
                 INSERT INTO attempts_cloud
-                  (device_uuid, attempt_id, class_code, qid, correct,
+                  (device_uuid, attempt_id, class_code, student_no, qid, correct,
                    use_sec, error_type, ts, received_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(device_uuid, attempt_id) DO NOTHING
             """
 
@@ -293,6 +293,7 @@ async def receive_attempts(request: Request) -> dict:
                     device_uuid,
                     attempt_id,
                     class_code,
+                    student_no,
                     qid,
                     correct,
                     _normalize_use_sec(attempt.get("use_sec")),

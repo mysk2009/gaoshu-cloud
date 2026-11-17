@@ -6,17 +6,24 @@
     calc: "计算",
     careless: "看错",
   };
+  const REQUEST_TIMEOUT_MS = 75000;
+  const WAKE_MESSAGE =
+    "正在连接服务器…（免费实例首次唤醒可能需要 30–60 秒，请勿关闭页面）";
 
   const state = {
     token: sessionStorage.getItem("teacherToken") || "",
     classInfo: readStoredClassInfo(),
     board: null,
+    retryAction: null,
+    pendingCreate: null,
+    readyTimer: null,
   };
 
   const elements = {};
   for (const id of [
-    "notice", "entry-section", "entry-form", "entry-code", "entry-secret",
-    "show-create", "create-section", "create-form", "create-code",
+    "notice", "connection-status", "connection-text", "retry-action",
+    "entry-section", "entry-form", "entry-code", "entry-secret", "entry-submit",
+    "show-create", "create-section", "create-form", "create-code", "create-submit",
     "create-class-name", "create-teacher-name", "create-secret",
     "hide-create", "student-card", "card-url", "card-code", "card-secret",
     "card-whole", "copy-whole", "dashboard-section", "board-class-name",
@@ -40,6 +47,74 @@
     elements.notice.textContent = text;
     elements.notice.classList.toggle("ok", tone === "ok");
     elements.notice.classList.toggle("hidden", !visible);
+  }
+
+  function showConnecting() {
+    clearTimeout(state.readyTimer);
+    elements["connection-status"].classList.remove("hidden", "ready");
+    elements["connection-text"].textContent = WAKE_MESSAGE;
+  }
+
+  function showConnected() {
+    clearTimeout(state.readyTimer);
+    elements["connection-status"].classList.remove("hidden");
+    elements["connection-status"].classList.add("ready");
+    elements["connection-text"].textContent = "服务器已连接";
+    state.readyTimer = setTimeout(() => {
+      elements["connection-status"].classList.add("hidden");
+    }, 2200);
+  }
+
+  function showRetry(action) {
+    state.retryAction = action;
+    elements["retry-action"].classList.remove("hidden");
+  }
+
+  function clearRetry() {
+    state.retryAction = null;
+    elements["retry-action"].classList.add("hidden");
+  }
+
+  async function fetchWithTimeout(resource, options = {}) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(resource, {
+        ...options,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        const timeoutError = new Error("服务器还没醒，请点「重试」");
+        timeoutError.isTimeout = true;
+        throw timeoutError;
+      }
+      const networkError = new Error("网络连接失败，请检查网络后重试");
+      networkError.cause = error;
+      throw networkError;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async function runButtonAction(button, action) {
+    if (button.disabled) return;
+    const originalText = button.textContent;
+    clearRetry();
+    button.disabled = true;
+    button.textContent = "正在连接…";
+    showConnecting();
+    try {
+      await action();
+    } catch (error) {
+      setNotice(error?.message || "连接失败，请稍后重试");
+      if (error?.isTimeout) {
+        showRetry(() => runButtonAction(button, action));
+      }
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
   }
 
   function clearSession() {
@@ -246,13 +321,16 @@
 
   async function loadBoard() {
     setNotice("正在加载看板…");
+    showConnecting();
     try {
-      const response = await fetch("/api/board", {
+      const response = await fetchWithTimeout("/api/board", {
         headers: { Authorization: `Bearer ${state.token}` },
       });
       state.board = await parseResponse(response);
       renderBoard();
       setNotice("", "ok", false);
+      clearRetry();
+      showConnected();
     } catch (error) {
       if (error.status === 401) {
         clearSession();
@@ -260,7 +338,8 @@
         setNotice("登录已失效，请重新输入班级码和管理口令");
         return;
       }
-      setNotice(error.message);
+      setNotice(error?.message || "看板加载失败，请稍后重试");
+      showRetry(loadBoard);
     }
   }
 
@@ -269,7 +348,8 @@
       setNotice("先填老师给你的班级码");
       return null;
     }
-    const response = await fetch("/api/teacher/enter", {
+    showConnecting();
+    const response = await fetchWithTimeout("/api/teacher/enter", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -299,27 +379,26 @@
     elements["create-section"].classList.add("hidden");
   });
 
-  elements["entry-form"].addEventListener("submit", async (event) => {
-    event.preventDefault();
+  async function submitEntry() {
     const classCode = elements["entry-code"].value.trim().toUpperCase();
     if (!classCode) {
       setNotice("先填老师给你的班级码");
       return;
     }
-    try {
-      const data = await enterClass(classCode, elements["entry-secret"].value);
-      saveSession(data);
-      elements["entry-secret"].value = "";
-      elements["entry-section"].classList.add("hidden");
-      elements["create-section"].classList.add("hidden");
-      await loadBoard();
-    } catch (error) {
-      setNotice(error.message);
-    }
+    const data = await enterClass(classCode, elements["entry-secret"].value);
+    saveSession(data);
+    elements["entry-secret"].value = "";
+    elements["entry-section"].classList.add("hidden");
+    elements["create-section"].classList.add("hidden");
+    await loadBoard();
+  }
+
+  elements["entry-form"].addEventListener("submit", (event) => {
+    event.preventDefault();
+    runButtonAction(elements["entry-submit"], submitEntry);
   });
 
-  elements["create-form"].addEventListener("submit", async (event) => {
-    event.preventDefault();
+  async function submitCreate() {
     const classCode = elements["create-code"].value.trim().toUpperCase();
     const adminSecret = elements["create-secret"].value;
     if (!classCode) {
@@ -330,8 +409,8 @@
       setNotice("管理口令至少 6 位");
       return;
     }
-    try {
-      const created = await fetch("/api/teacher/create", {
+    if (!state.pendingCreate) {
+      const response = await fetchWithTimeout("/api/teacher/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -340,17 +419,36 @@
           teacher_name: elements["create-teacher-name"].value,
           admin_secret: adminSecret,
         }),
-      }).then(parseResponse);
+      });
+      const created = await parseResponse(response);
+      state.pendingCreate = {
+        classCode,
+        adminSecret,
+        created,
+      };
       showStudentCard(created);
       elements["create-form"].classList.add("hidden");
-      const entered = await enterClass(classCode, adminSecret);
-      saveSession(entered);
-      elements["entry-section"].classList.add("hidden");
-      setNotice("班级已建好，学生卡片可以发给学生了", "ok");
-      await loadBoard();
-    } catch (error) {
-      setNotice(error.message);
     }
+    const entered = await enterClass(
+      state.pendingCreate.classCode,
+      state.pendingCreate.adminSecret,
+    );
+    saveSession(entered);
+    state.pendingCreate = null;
+    elements["entry-section"].classList.add("hidden");
+    setNotice("班级已建好，学生卡片可以发给学生了", "ok");
+    await loadBoard();
+  }
+
+  elements["create-form"].addEventListener("submit", (event) => {
+    event.preventDefault();
+    runButtonAction(elements["create-submit"], submitCreate);
+  });
+
+  elements["retry-action"].addEventListener("click", () => {
+    const action = state.retryAction;
+    clearRetry();
+    if (action) action();
   });
 
   for (const button of document.querySelectorAll("[data-copy-target]")) {
@@ -375,7 +473,8 @@
   elements["export-xlsx"].addEventListener("click", async () => {
     if (!state.board) return;
     try {
-      const response = await fetch("/api/export.xlsx", {
+      showConnecting();
+      const response = await fetchWithTimeout("/api/export.xlsx", {
         headers: { Authorization: `Bearer ${state.token}` },
       });
       if (!response.ok) {
@@ -397,8 +496,11 @@
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
+      clearRetry();
+      showConnected();
     } catch (error) {
-      setNotice(error.message);
+      setNotice(error?.message || "导出失败，请稍后重试");
+      if (error.isTimeout || error.cause) showRetry(loadBoard);
     }
   });
 

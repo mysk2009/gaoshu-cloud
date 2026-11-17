@@ -45,6 +45,7 @@ DDL_STATEMENTS = (
       device_uuid TEXT NOT NULL,
       attempt_id  TEXT NOT NULL,
       class_code  TEXT NOT NULL,
+      student_no  TEXT,
       qid         TEXT NOT NULL,
       correct     SMALLINT,
       use_sec     INTEGER,
@@ -89,4 +90,21 @@ def ensure_schema(database: Database) -> None:
         if "class_admin_secret" not in columns:
             connection.execute(
                 "ALTER TABLE classes_cloud ADD COLUMN class_admin_secret TEXT"
+            )
+
+        if database.backend == "sqlite":
+            attempt_columns = [
+                database.row_value(row, "name")
+                for row in connection.execute(
+                    "PRAGMA table_info(attempts_cloud)"
+                ).fetchall()
+            ]
+            if "student_no" not in attempt_columns:
+                connection.execute(
+                    "ALTER TABLE attempts_cloud ADD COLUMN student_no TEXT"
+                )
+        else:
+            connection.execute(
+                "ALTER TABLE attempts_cloud "
+                "ADD COLUMN IF NOT EXISTS student_no TEXT"
             )

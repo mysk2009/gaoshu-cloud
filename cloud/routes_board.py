@@ -22,6 +22,26 @@ ERROR_LABELS = {
     "careless": "看错",
 }
 
+RESOLVED_ATTEMPTS_CTE = """
+WITH resolved_attempts AS (
+  SELECT
+    a.device_uuid,
+    a.attempt_id,
+    a.class_code,
+    a.qid,
+    a.correct,
+    a.use_sec,
+    a.error_type,
+    a.ts,
+    a.received_at,
+    COALESCE(NULLIF(a.student_no, ''), d.student_no) AS student_no
+  FROM attempts_cloud AS a
+  LEFT JOIN devices AS d
+    ON d.device_uuid = a.device_uuid
+   AND d.class_code = a.class_code
+)
+"""
+
 
 def _require_class(
     database: Any, connection: Any, raw_class_code: object
@@ -147,46 +167,48 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         )
         student_rows = database.fetchall(
             connection,
-            """
+            RESOLVED_ATTEMPTS_CTE
+            + """
             SELECT
               r.student_no,
               r.real_name,
-              d.device_uuid,
+              (
+                SELECT d.device_uuid
+                FROM devices AS d
+                WHERE d.class_code = r.class_code
+                  AND d.student_no = r.student_no
+                  AND d.student_no IS NOT NULL
+                ORDER BY d.verified_at DESC
+                LIMIT 1
+              ) AS device_uuid,
               COUNT(a.attempt_id) AS attempt_count,
               COALESCE(SUM(CASE WHEN a.correct = 1 THEN 1 ELSE 0 END), 0)
                 AS correct_count,
               MIN(COALESCE(a.ts, a.received_at)) AS first_at,
               MAX(COALESCE(a.ts, a.received_at)) AS last_at
             FROM roster_cloud AS r
-            LEFT JOIN devices AS d
-              ON d.class_code = r.class_code
-             AND d.student_no = r.student_no
-             AND d.student_no IS NOT NULL
-            LEFT JOIN attempts_cloud AS a
-              ON a.class_code = d.class_code
-             AND a.device_uuid = d.device_uuid
+            LEFT JOIN resolved_attempts AS a
+              ON a.class_code = r.class_code
+             AND a.student_no = r.student_no
             WHERE r.class_code = ?
-            GROUP BY r.student_no, r.real_name, d.device_uuid
-            ORDER BY r.student_no, d.device_uuid
+            GROUP BY r.student_no, r.real_name
+            ORDER BY r.student_no
             """,
             (class_code,),
         )
         error_rows = database.fetchall(
             connection,
-            """
+            RESOLVED_ATTEMPTS_CTE
+            + """
             SELECT
               r.student_no,
               a.error_type,
               COUNT(DISTINCT a.device_uuid) AS error_count
-            FROM attempts_cloud AS a
-            JOIN devices AS d
-              ON d.device_uuid = a.device_uuid
-             AND d.class_code = a.class_code
+            FROM resolved_attempts AS a
             JOIN roster_cloud AS r
-              ON r.class_code = d.class_code
-             AND r.student_no = d.student_no
+              ON r.class_code = a.class_code
+             AND r.student_no = a.student_no
             WHERE a.class_code = ?
-              AND d.student_no IS NOT NULL
               AND a.error_type IS NOT NULL
               AND a.error_type <> ''
               AND a.error_type <> 'none'
@@ -196,7 +218,8 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         )
         question_rows = database.fetchall(
             connection,
-            """
+            RESOLVED_ATTEMPTS_CTE
+            + """
             SELECT
               a.qid,
               COUNT(DISTINCT a.device_uuid) AS devices,
@@ -206,29 +229,28 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
               AVG(CASE
                 WHEN a.use_sec IS NOT NULL THEN a.use_sec
               END) AS avg_use_sec
-            FROM attempts_cloud AS a
-            JOIN devices AS d
-              ON d.device_uuid = a.device_uuid
-             AND d.class_code = a.class_code
+            FROM resolved_attempts AS a
+            JOIN roster_cloud AS r
+              ON r.class_code = a.class_code
+             AND r.student_no = a.student_no
             WHERE a.class_code = ?
-              AND d.student_no IS NOT NULL
             GROUP BY a.qid
             """,
             (class_code,),
         )
         question_error_rows = database.fetchall(
             connection,
-            """
+            RESOLVED_ATTEMPTS_CTE
+            + """
             SELECT
               a.qid,
               a.error_type,
               COUNT(DISTINCT a.device_uuid) AS error_count
-            FROM attempts_cloud AS a
-            JOIN devices AS d
-              ON d.device_uuid = a.device_uuid
-             AND d.class_code = a.class_code
+            FROM resolved_attempts AS a
+            JOIN roster_cloud AS r
+              ON r.class_code = a.class_code
+             AND r.student_no = a.student_no
             WHERE a.class_code = ?
-              AND d.student_no IS NOT NULL
               AND a.correct = 0
               AND a.error_type IS NOT NULL
               AND a.error_type <> ''
@@ -251,16 +273,16 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         )
         bound_totals = database.fetchone(
             connection,
-            """
+            RESOLVED_ATTEMPTS_CTE
+            + """
             SELECT
               COUNT(a.attempt_id) AS attempts,
-              COUNT(DISTINCT d.device_uuid) AS devices
-            FROM devices AS d
-            LEFT JOIN attempts_cloud AS a
-              ON a.class_code = d.class_code
-             AND a.device_uuid = d.device_uuid
-            WHERE d.class_code = ?
-              AND d.student_no IS NOT NULL
+              COUNT(DISTINCT a.device_uuid) AS devices
+            FROM resolved_attempts AS a
+            JOIN roster_cloud AS r
+              ON r.class_code = a.class_code
+             AND r.student_no = a.student_no
+            WHERE a.class_code = ?
             """,
             (class_code,),
         )
