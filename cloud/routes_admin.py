@@ -13,6 +13,46 @@ from cloud.routes_auth import require_teacher_class
 
 router = APIRouter(prefix="/api/admin")
 
+PURGE_TEST_PREFIXES = ("DEMO", "AUD", "PG", "DSH", "TEST", "LV")
+PURGE_TABLES = (
+    "attempts_cloud",
+    "devices",
+    "roster_cloud",
+    "classes_cloud",
+)
+PURGE_COUNT_SQL = {
+    "attempts_cloud": (
+        "SELECT COUNT(*) AS total FROM attempts_cloud WHERE class_code = ?"
+    ),
+    "devices": "SELECT COUNT(*) AS total FROM devices WHERE class_code = ?",
+    "roster_cloud": (
+        "SELECT COUNT(*) AS total FROM roster_cloud WHERE class_code = ?"
+    ),
+    "classes_cloud": (
+        "SELECT COUNT(*) AS total FROM classes_cloud WHERE class_code = ?"
+    ),
+}
+PURGE_DELETE_SQL = {
+    "attempts_cloud": "DELETE FROM attempts_cloud WHERE class_code = ?",
+    "devices": "DELETE FROM devices WHERE class_code = ?",
+    "roster_cloud": "DELETE FROM roster_cloud WHERE class_code = ?",
+    "classes_cloud": "DELETE FROM classes_cloud WHERE class_code = ?",
+}
+
+
+class PurgeInputError(ValueError):
+    """Invalid purge selectors supplied by a CLI or admin request."""
+
+
+class PurgeSafetyError(ValueError):
+    """A purge selected at least one class outside the test prefixes."""
+
+    def __init__(self, class_codes: list[str]):
+        self.class_codes = class_codes
+        super().__init__(
+            "refusing non-test classes: " + ",".join(class_codes)
+        )
+
 
 def _check_admin(request: Request) -> None:
     provided = request.headers.get("X-Admin-Token", "")
@@ -29,6 +69,113 @@ async def _json_object(request: Request) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     return payload
+
+
+def _normalize_purge_values(values: object, label: str) -> list[str]:
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise PurgeInputError(f"{label} must be a list")
+
+    normalized: list[str] = []
+    for raw_value in values:
+        if not isinstance(raw_value, str):
+            raise PurgeInputError(f"{label} entries must be strings")
+        value = raw_value.strip().upper()
+        if not value:
+            raise PurgeInputError(f"{label} entries must not be empty")
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _match_purge_classes(
+    database: Any,
+    connection: Any,
+    patterns: list[str],
+    codes: list[str],
+) -> list[str]:
+    matched: set[str] = set()
+    for pattern in patterns:
+        rows = database.fetchall(
+            connection,
+            """
+            SELECT class_code
+            FROM classes_cloud
+            WHERE class_code LIKE ?
+            """,
+            (pattern,),
+        )
+        matched.update(
+            str(database.row_value(row, "class_code")) for row in rows
+        )
+    for class_code in codes:
+        row = database.fetchone(
+            connection,
+            """
+            SELECT class_code
+            FROM classes_cloud
+            WHERE class_code = ?
+            """,
+            (class_code,),
+        )
+        if row is not None:
+            matched.add(str(database.row_value(row, "class_code")))
+    return sorted(matched)
+
+
+def purge_classes(
+    database: Any,
+    *,
+    patterns: object = None,
+    codes: object = None,
+    execute: bool = False,
+    allow_any: bool = False,
+) -> dict[str, Any]:
+    normalized_patterns = _normalize_purge_values(patterns, "patterns")
+    normalized_codes = _normalize_purge_values(codes, "codes")
+    if bool(normalized_patterns) == bool(normalized_codes):
+        raise PurgeInputError("provide exactly one of patterns or codes")
+
+    transaction = database.transaction() if execute else database.connection()
+    deleted = {table: 0 for table in PURGE_TABLES}
+    with transaction as connection:
+        matched_classes = _match_purge_classes(
+            database,
+            connection,
+            normalized_patterns,
+            normalized_codes,
+        )
+        unsafe_classes = [
+            class_code
+            for class_code in matched_classes
+            if not class_code.startswith(PURGE_TEST_PREFIXES)
+        ]
+        if unsafe_classes and not allow_any:
+            raise PurgeSafetyError(unsafe_classes)
+
+        for table in PURGE_TABLES:
+            for class_code in matched_classes:
+                if execute:
+                    cursor = database.execute(
+                        connection,
+                        PURGE_DELETE_SQL[table],
+                        (class_code,),
+                    )
+                    deleted[table] += max(cursor.rowcount, 0)
+                else:
+                    row = database.fetchone(
+                        connection,
+                        PURGE_COUNT_SQL[table],
+                        (class_code,),
+                    )
+                    deleted[table] += int(database.row_value(row, "total") or 0)
+
+    return {
+        "mode": "DELETE" if execute else "dry-run",
+        "matched_classes": matched_classes,
+        "deleted": deleted,
+    }
 
 
 def _require_class(
@@ -229,6 +376,44 @@ async def create_class(request: Request) -> dict:
         "created": created,
         "class_admin_secret": class_admin_secret if created else None,
     }
+
+
+@router.post("/classes/purge")
+async def purge_admin_classes(request: Request) -> dict:
+    _check_admin(request)
+    payload = await _json_object(request)
+
+    dry_run = payload.get("dry_run", True)
+    if not isinstance(dry_run, bool):
+        raise HTTPException(status_code=400, detail="dry_run 必须是布尔值")
+    if not dry_run and payload.get("confirm") != "DELETE":
+        raise HTTPException(
+            status_code=400,
+            detail='真删必须提供 confirm="DELETE"',
+        )
+    allow_any = payload.get("allow_any", False)
+    if not isinstance(allow_any, bool):
+        raise HTTPException(status_code=400, detail="allow_any 必须是布尔值")
+
+    try:
+        return purge_classes(
+            request.app.state.database,
+            patterns=payload.get("patterns"),
+            codes=payload.get("codes"),
+            execute=not dry_run,
+            allow_any=allow_any,
+        )
+    except PurgeSafetyError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "匹配到非测试班："
+                + ",".join(exc.class_codes)
+                + "；如确认要删，请传 allow_any=true"
+            ),
+        ) from exc
+    except PurgeInputError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/classes", include_in_schema=False)

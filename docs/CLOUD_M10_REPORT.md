@@ -630,3 +630,169 @@ git diff --check
 ```
 
 以上命令均无输出且退出码为 0。
+
+## M10F 清班工具与运维接口
+
+日期：2026-11-18
+起点：`d1927c8`
+范围：新增 `tools/cloud_purge.py`、`清理测试班.bat`，修改
+`cloud/routes_admin.py`
+
+### 实现
+
+- 新增本地 CLI，`--dsn` 优先，其次读取 `CLOUD_DB_URL`；支持
+  `sqlite:///`、`postgresql://` 与 `postgres://`。
+- CLI 必须二选一传入 `--match` 或 `--codes`；输入统一去空白并转大写。
+  无 `--yes` 时只读统计，不执行 DELETE。
+- 删除顺序固定为 `attempts_cloud`、`devices`、`roster_cloud`、
+  `classes_cloud`。每个班级码都通过固定 SQL 参数查询和删除，没有把用户输入
+  拼进 SQL 字符串。
+- 匹配到不以 `DEMO/AUD/PG/DSH/TEST/LV` 开头的班级时默认拒绝；
+  `--allow-any` 仅解除该护栏，仍需 `--yes` 才真删。
+- CLI 输出 matched class 列表、各表条数和总行数；退出码按要求区分正常、
+  数据库/依赖失败和参数/护栏错误。PostgreSQL 模式缺少 `psycopg` 时输出
+  安装命令，不抛裸 traceback。
+- 新增 `POST /api/admin/classes/purge`，使用 `X-Admin-Token` 鉴权；
+  `dry_run` 缺省为 `true`，`dry_run=false` 时必须同时提供字面量
+  `confirm="DELETE"`，接口与 CLI 共用同一套匹配、护栏和删除实现。
+- bat 文件为纯 ASCII，所有 `%` 已按 cmd 规则写成 `%%`，双击只执行 dry-run。
+
+### 自测环境
+
+按任务指定使用
+`C:\Users\mysk2008\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe`，
+真实启动 `cloud.main:app` 并监听 `127.0.0.1:8114`，数据库为
+`sqlite:///D:/_scratch/m10f/t.db`，管理 token 为 `fixtoken`。
+
+服务启动原始输出：
+
+```text
+[cloud] backend=sqlite path=D:/_scratch/m10f/t.db
+[cloud] backfilled attempts.student_no rows=0
+INFO:     Started server process [15836]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8114 (Press CTRL+C to quit)
+```
+
+### 1-2. 建班、名单、作答
+
+以下操作全部通过运行中的 HTTP 接口完成。TEST01、DEMO26 各导入 2 人并提交
+2 条作答，REAL01 只导入 2 人。
+
+```text
+[fixture] create TEST01 status=200 body={'ok': True, 'class_code': 'TEST01', 'created': True, 'class_admin_secret': 'admin01'}
+[fixture] roster TEST01 status=200 body={'ok': True, 'imported': 2, 'updated': 0, 'total': 2}
+[fixture] sync TEST01 status=200 body={'accepted': 2, 'duplicated': 0, 'skipped': 0, 'total_received': 2, 'server_time': '2026-11-18T10:34:35'}
+[fixture] create DEMO26 status=200 body={'ok': True, 'class_code': 'DEMO26', 'created': True, 'class_admin_secret': 'admin01'}
+[fixture] roster DEMO26 status=200 body={'ok': True, 'imported': 2, 'updated': 0, 'total': 2}
+[fixture] sync DEMO26 status=200 body={'accepted': 2, 'duplicated': 0, 'skipped': 0, 'total_received': 2, 'server_time': '2026-11-18T10:34:35'}
+[fixture] create REAL01 status=200 body={'ok': True, 'class_code': 'REAL01', 'created': True, 'class_admin_secret': 'admin01'}
+[fixture] roster REAL01 status=200 body={'ok': True, 'imported': 2, 'updated': 0, 'total': 2}
+[before] board TEST01 status=200 totals={"roster": 2, "submitted": 1, "missing": 1, "attempts": 2, "devices": 1}
+[before] board DEMO26 status=200 totals={"roster": 2, "submitted": 1, "missing": 1, "attempts": 2, "devices": 1}
+[before] board REAL01 status=200 totals={"roster": 2, "submitted": 0, "missing": 2, "attempts": 0, "devices": 0}
+[PASS] fixture
+```
+
+### 3. CLI 默认 dry-run
+
+```text
+[cloud-purge] matched classes=DEMO26,TEST01
+[cloud-purge] mode=dry-run pattern=TEST%,DEMO% attempts_cloud=4 devices=2 roster_cloud=4 classes_cloud=2
+[cloud-purge] total rows=12 classes=2
+EXIT=0
+```
+
+dry-run 后立即重新读取三班看板，条数未变化：
+
+```text
+[snapshot] board TEST01 status=200 totals={"roster": 2, "submitted": 1, "missing": 1, "attempts": 2, "devices": 1}
+[snapshot] board DEMO26 status=200 totals={"roster": 2, "submitted": 1, "missing": 1, "attempts": 2, "devices": 1}
+[snapshot] board REAL01 status=200 totals={"roster": 2, "submitted": 0, "missing": 2, "attempts": 0, "devices": 0}
+[PASS] snapshot
+```
+
+### 4. CLI 真删
+
+```text
+[cloud-purge] matched classes=DEMO26,TEST01
+[cloud-purge] mode=DELETE pattern=TEST%,DEMO% attempts_cloud=4 devices=2 roster_cloud=4 classes_cloud=2
+[cloud-purge] total rows=12 classes=2
+EXIT=0
+```
+
+删除后，已删班级仍可使用签名有效的旧 teacher token 访问 `/api/board`，
+因此会真正走到班级存在性检查并返回 404：
+
+```text
+[after] board TEST01 status=404 body={"detail": "班级不存在，请核对老师给的班级码"}
+[after] board DEMO26 status=404 body={"detail": "班级不存在，请核对老师给的班级码"}
+[after] board REAL01 status=200 roster=2 totals={"roster": 2, "submitted": 0, "missing": 2, "attempts": 0, "devices": 0}
+[PASS] verify-cli-delete
+```
+
+### 5. 非测试前缀护栏
+
+```text
+[cloud-purge] ERROR: refusing non-test classes=REAL01; use --allow-any to proceed
+EXIT=2
+[cloud-purge] matched classes=REAL01
+[cloud-purge] mode=dry-run pattern=REAL% attempts_cloud=0 devices=0 roster_cloud=2 classes_cloud=1
+[cloud-purge] total rows=3 classes=1
+EXIT=0
+```
+
+第二条命令带 `--allow-any` 但未带 `--yes`，输出仍为 `mode=dry-run`。
+
+### 6. 运维接口
+
+另建 TEST02、DEMO27、REAL02，各 2 人；TEST02/DEMO27 各 2 条作答。
+原始响应：
+
+```text
+[item6-no-token] status=401 body={"detail": "管理员口令不正确"}
+[item6-default-dry-run] status=200 body={"mode": "dry-run", "matched_classes": ["DEMO27", "TEST02"], "deleted": {"attempts_cloud": 4, "devices": 2, "roster_cloud": 4, "classes_cloud": 2}}
+[item6-default-dry-run-still-exists] board TEST02 status=200 totals={'roster': 2, 'submitted': 1, 'missing': 1, 'attempts': 2, 'devices': 1}
+[item6-missing-confirm] status=400 body={"detail": "真删必须提供 confirm=\"DELETE\""}
+[item6-non-test-guard] status=400 body={"detail": "匹配到非测试班：REAL01,REAL02；如确认要删，请传 allow_any=true"}
+[item6-delete] status=200 body={"mode": "DELETE", "matched_classes": ["DEMO27", "TEST02"], "deleted": {"attempts_cloud": 4, "devices": 2, "roster_cloud": 4, "classes_cloud": 2}}
+[item6-after] board TEST02 status=404
+[item6-after] board DEMO27 status=404
+[item6-after] board REAL02 status=200 roster=2
+[PASS] api-sequence
+```
+
+`item6-default-dry-run` 请求未传 `dry_run` 与 `confirm`，返回
+`mode=dry-run`，且 TEST02 仍为 200。真删请求同时传
+`confirm="DELETE"`、`dry_run=false` 后才返回 `mode=DELETE`。
+
+### 7. SQL lint、参数边界与文件检查
+
+```text
+[sql-postgres-lint] clean: scanned 6 files
+```
+
+空选择器和缺少 psycopg 的明确失败：
+
+```text
+[cloud-purge] ERROR: selector entries must not be empty
+EXIT=2
+[cloud-purge] ERROR: PostgreSQL support requires psycopg; install it with: pip install 'psycopg[binary]'
+EXIT=1
+```
+
+bat 编码检查与 Python 语法检查：
+
+```text
+Bytes         : 180
+NonAsciiBytes : 0
+[py_compile] exit=0
+```
+
+### PostgreSQL 验证边界
+
+任务指定虚拟环境中没有可导入的 `psycopg`，本机也没有 PostgreSQL 实例，
+因此没有伪造 PostgreSQL 运行结果。CLI 的缺失依赖提示和退出码已实测；
+SQL 已通过 `cloud/sql_postgres_lint.py`，且查询值全部使用参数绑定。
+云端依赖 `cloud/requirements.txt` 已声明 `psycopg[binary]>=3.2,<4`。
