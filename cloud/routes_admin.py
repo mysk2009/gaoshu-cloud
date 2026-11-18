@@ -549,6 +549,56 @@ def get_roster(request: Request, class_code: str = "") -> dict:
     }
 
 
+@router.post("/manual_submit")
+async def set_manual_submit(request: Request) -> dict:
+    payload = await _json_object(request)
+    submitted = payload.get("submitted")
+    if not isinstance(submitted, bool):
+        raise HTTPException(status_code=400, detail="submitted 必须是布尔值")
+
+    database = request.app.state.database
+    teacher_class_code = require_teacher_class(
+        request, payload.get("class_code")
+    )
+
+    with database.transaction() as connection:
+        class_code = _require_class(database, connection, teacher_class_code)
+        student_no = normalize_student_no(payload.get("student_no"))
+        if not student_no:
+            raise HTTPException(status_code=400, detail="学号不能为空")
+        roster_row = database.fetchone(
+            connection,
+            """
+            SELECT 1
+            FROM roster_cloud
+            WHERE class_code = ? AND student_no = ?
+            """,
+            (class_code, student_no),
+        )
+        if roster_row is None:
+            raise HTTPException(status_code=404, detail="名单里没有这个学号")
+
+        manual_submitted = (
+            datetime.now().isoformat(timespec="seconds") if submitted else None
+        )
+        database.execute(
+            connection,
+            """
+            UPDATE roster_cloud
+            SET manual_submitted = ?
+            WHERE class_code = ? AND student_no = ?
+            """,
+            (manual_submitted, class_code, student_no),
+        )
+
+    return {
+        "ok": True,
+        "class_code": class_code,
+        "student_no": student_no,
+        "manual_submitted": manual_submitted,
+    }
+
+
 @router.post("/roster/unbind")
 async def unbind_roster_student(request: Request) -> dict:
     payload = await _json_object(request)

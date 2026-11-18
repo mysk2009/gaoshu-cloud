@@ -87,19 +87,31 @@ def _missing_callout(missing: list[dict[str, Any]]) -> str:
     )
 
 
-def _build_headline(roster_count: int, submitted: int, missing: list[dict[str, Any]]) -> str:
-    headline = f"名单 {roster_count} 人，{submitted} 人已交"
-    if not missing:
-        return headline
+def _build_headline(
+    roster_count: int,
+    submitted: int,
+    missing: list[dict[str, Any]],
+    manual_count: int = 0,
+) -> str:
+    return _build_headline_with_manual(
+        roster_count,
+        submitted,
+        manual_count,
+        len(missing),
+    )
 
-    names = [
-        str(student["real_name"] or student["student_no"]) for student in missing
-    ]
-    if len(names) <= 3:
-        callout = "、".join(names)
-    else:
-        callout = f"{'、'.join(names[:3])}等 {len(names)} 人"
-    return f"{headline}，{callout}还没交"
+
+def _build_headline_with_manual(
+    roster_count: int,
+    submitted: int,
+    manual_count: int,
+    missing_count: int,
+) -> str:
+    manual_suffix = f"（其中 {manual_count} 人手工标记）" if manual_count else ""
+    return (
+        f"名单 {roster_count} 人，{submitted} 人已交"
+        f"{manual_suffix}，{missing_count} 人未交"
+    )
 
 
 def _build_next_action(review_count: int, missing_count: int) -> str:
@@ -140,6 +152,8 @@ def _build_student_advice(student: dict[str, Any]) -> str:
     """一句话建议。正确率已有单独一列，这里不重复数字，只讲该干什么。"""
     if not student["submitted"]:
         return "还没交"
+    if student["manual_submitted"] and not student["attempt_count"]:
+        return "已手工标记"
     rate = student["correct_rate"]
     if rate is not None and rate < 0.6:
         return "建议补基础"
@@ -158,7 +172,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         roster_rows = database.fetchall(
             connection,
             """
-            SELECT student_no, real_name
+            SELECT student_no, real_name, manual_submitted
             FROM roster_cloud
             WHERE class_code = ?
             ORDER BY student_no
@@ -172,6 +186,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
             SELECT
               r.student_no,
               r.real_name,
+              r.manual_submitted,
               (
                 SELECT d.device_uuid
                 FROM devices AS d
@@ -191,7 +206,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
               ON a.class_code = r.class_code
              AND a.student_no = r.student_no
             WHERE r.class_code = ?
-            GROUP BY r.class_code, r.student_no, r.real_name
+            GROUP BY r.class_code, r.student_no, r.real_name, r.manual_submitted
             ORDER BY r.student_no
             """,
             (class_code,),
@@ -306,6 +321,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
                 "student_no": student_no,
                 "real_name": database.row_value(row, "real_name"),
                 "submitted": False,
+                "manual_submitted": False,
                 "attempt_count": 0,
                 "correct_count": 0,
                 "first_at": None,
@@ -317,6 +333,8 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         aggregate["correct_count"] += correct_count
         if attempt_count > 0:
             aggregate["submitted"] = True
+        if database.row_value(row, "manual_submitted"):
+            aggregate["manual_submitted"] = True
         if database.row_value(row, "device_uuid"):
             aggregate["device_uuid"] = database.row_value(row, "device_uuid")
         first_at = database.row_value(row, "first_at")
@@ -339,12 +357,25 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
                 "student_no": student_no,
                 "real_name": database.row_value(roster_row, "real_name"),
                 "submitted": False,
+                "manual_submitted": False,
                 "attempt_count": 0,
                 "correct_count": 0,
                 "first_at": None,
                 "last_at": None,
                 "device_uuid": None,
             }
+        aggregate["manual_submitted"] = bool(
+            aggregate["manual_submitted"]
+            or database.row_value(roster_row, "manual_submitted")
+        )
+        aggregate["submitted"] = bool(
+            aggregate["attempt_count"] or aggregate["manual_submitted"]
+        )
+        aggregate["submitted_by"] = (
+            "auto"
+            if aggregate["attempt_count"]
+            else ("manual" if aggregate["manual_submitted"] else None)
+        )
         aggregate["correct_rate"] = _round_rate(
             aggregate["correct_count"], aggregate["attempt_count"]
         )
@@ -423,6 +454,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         {
             "student_no": student["student_no"],
             "real_name": student["real_name"],
+            "manual_submitted": student["manual_submitted"],
         }
         for student in students
         if not student["submitted"]
@@ -433,6 +465,9 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
 
     roster_count = len(roster_rows)
     submitted_count = sum(1 for student in students if student["submitted"])
+    manual_submitted_count = sum(
+        1 for student in students if student["manual_submitted"]
+    )
     missing_count = len(missing)
 
     return {
@@ -442,6 +477,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         "totals": {
             "roster": roster_count,
             "submitted": submitted_count,
+            "manual_submitted": manual_submitted_count,
             "missing": missing_count,
             "attempts": int(database.row_value(bound_totals, "attempts") or 0),
             "devices": int(database.row_value(bound_totals, "devices") or 0),
@@ -459,7 +495,9 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         "students": students,
         "weak_top": weak_top,
         "review_list": review_list,
-        "headline": _build_headline(roster_count, submitted_count, missing),
+        "headline": _build_headline(
+            roster_count, submitted_count, missing, manual_submitted_count
+        ),
         "next_action": _build_next_action(len(review_list), missing_count),
         "missing_callout": _missing_callout(missing),
     }

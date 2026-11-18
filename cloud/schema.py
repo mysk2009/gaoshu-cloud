@@ -33,6 +33,7 @@ DDL_STATEMENTS = (
       student_no TEXT NOT NULL,
       real_name  TEXT NOT NULL,
       created_at TEXT,
+      manual_submitted TEXT,
       PRIMARY KEY (class_code, student_no)
     )
     """,
@@ -117,6 +118,23 @@ def ensure_schema(database: Database) -> None:
         if "class_admin_secret" not in columns:
             connection.execute(
                 "ALTER TABLE classes_cloud ADD COLUMN class_admin_secret TEXT"
+            )
+
+        if database.backend == "sqlite":
+            roster_columns = [
+                database.row_value(row, "name")
+                for row in connection.execute(
+                    "PRAGMA table_info(roster_cloud)"
+                ).fetchall()
+            ]
+            if "manual_submitted" not in roster_columns:
+                connection.execute(
+                    "ALTER TABLE roster_cloud ADD COLUMN manual_submitted TEXT"
+                )
+        else:
+            connection.execute(
+                "ALTER TABLE roster_cloud "
+                "ADD COLUMN IF NOT EXISTS manual_submitted TEXT"
             )
 
         unify_cursor = database.execute(connection, UNIFY_CLASS_SECRET_SQL)
