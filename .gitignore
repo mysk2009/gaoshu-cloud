@@ -1,4 +1,28 @@
-cloud/__pycache__/
-cloud/data/
+# 构建产物与依赖（体积大，可重建）
+build/
+dist/
+node_modules/
+__pycache__/
 *.pyc
+GaoshuTiku.spec
+
+# 运行时数据（可从 data/questions.csv 重建）
+data/questions.db
+data/questions.db-*
+data/questions.db.initial
+data/admin_token.txt
+data/_upload/
+.testdata/
+logs/
+data.bak-*/
+
+data/questions.db.pre-algo*
+
+data/questions.db.v1
+
+cloud/.venv/
+cloud/data/
+
+# 本地运维凭据（Neon 连接串），绝不入库
+.cloud_dsn
 .env
