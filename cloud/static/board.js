@@ -33,7 +33,11 @@
     roster: document.getElementById("roster"),
     missingCount: document.getElementById("missing-count"),
     attempts: document.getElementById("attempts"),
+    conclusion: document.getElementById("conclusion"),
+    headline: document.getElementById("headline"),
+    nextAction: document.getElementById("next-action"),
     missingEmpty: document.getElementById("missing-empty"),
+    missingCallout: document.getElementById("missing-callout"),
     missingList: document.getElementById("missing-list"),
     copyMissing: document.getElementById("copy-missing"),
     studentsEmpty: document.getElementById("students-empty"),
@@ -120,6 +124,31 @@
     return td;
   }
 
+  function textValue(value) {
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function renderConclusion() {
+    if (!state.board) {
+      elements.conclusion.classList.add("hidden");
+      return;
+    }
+
+    const rosterCount = Number(state.board.totals?.roster || 0);
+    const emptyRosterText = "还没导名单，先把名单导进来";
+    const headline = rosterCount === 0
+      ? emptyRosterText
+      : textValue(state.board.headline) || "看板数据已更新";
+    const nextAction = rosterCount === 0
+      ? ""
+      : textValue(state.board.next_action);
+
+    elements.headline.textContent = headline;
+    elements.nextAction.textContent = nextAction;
+    elements.nextAction.classList.toggle("hidden", !nextAction);
+    elements.conclusion.classList.remove("hidden");
+  }
+
   function renderStudents() {
     const students = state.board ? state.board.students : [];
     elements.studentsBody.replaceChildren();
@@ -140,6 +169,7 @@
         cell(student.submitted ? "已交" : "未交", "是否已交"),
         cell(student.attempt_count, "作答数", true),
         cell(percent(student.correct_rate), "正确率", true),
+        cell(student.advice, "建议"),
       );
       elements.studentsBody.append(tr);
     }
@@ -151,7 +181,21 @@
 
   function renderMissing() {
     const missing = state.board ? state.board.missing : [];
+    const rosterCount = Number(state.board?.totals?.roster || 0);
     elements.missingList.replaceChildren();
+    if (!state.board) {
+      elements.missingCallout.classList.add("hidden");
+    } else if (rosterCount === 0) {
+      elements.missingCallout.textContent = "还没导名单";
+      elements.missingCallout.classList.remove("hidden");
+    } else if (!missing.length) {
+      elements.missingCallout.textContent = "全员已交";
+      elements.missingCallout.classList.remove("hidden");
+    } else {
+      elements.missingCallout.textContent =
+        textValue(state.board.missing_callout) || "请提醒以上同学补交";
+      elements.missingCallout.classList.remove("hidden");
+    }
     if (!missing.length) {
       elements.missingList.classList.add("hidden");
       elements.missingEmpty.classList.remove("hidden");
@@ -197,6 +241,7 @@
         cell(percent(item.wrong_rate), "错误率", true),
         cell(item.avg_use_sec == null ? "—" : `${item.avg_use_sec}s`, "平均用时", true),
         cell(types || "—", "错因分布"),
+        cell(item.reason, "为什么讲它"),
       );
       elements.reviewBody.append(tr);
     }
@@ -217,6 +262,7 @@
     elements.roster.textContent = String(totals.roster);
     elements.missingCount.textContent = String(totals.missing);
     elements.attempts.textContent = String(totals.attempts);
+    renderConclusion();
     renderMissing();
     renderStudents();
     renderReview();

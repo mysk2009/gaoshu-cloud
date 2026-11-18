@@ -89,7 +89,31 @@
     .loading-skeleton { display: grid; gap: 16px; }
     #dashboard:not(.loading) .loading-skeleton { display: none; }
     #dashboard.loading .metrics,
+    #dashboard.loading .conclusion,
     #dashboard.loading .grid { display: none; }
+    .conclusion {
+      margin: 0 0 16px;
+      padding: 17px 18px;
+      border: 1px solid #bfdbfe;
+      border-left: 5px solid var(--brand);
+      border-radius: 14px;
+      background: linear-gradient(135deg, #eff6ff 0%, #ffffff 72%);
+      box-shadow: 0 8px 24px rgba(37, 99, 235, .08);
+    }
+    .conclusion-headline {
+      margin: 0;
+      color: #172554;
+      font-size: clamp(19px, 3vw, 24px);
+      font-weight: 700;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .conclusion-action {
+      margin: 6px 0 0;
+      color: #1e40af;
+      font-size: 15px;
+      overflow-wrap: anywhere;
+    }
     .wake-hint {
       display: flex;
       align-items: center;
@@ -194,7 +218,21 @@
       color: #9a3412;
       overflow-wrap: anywhere;
     }
-    .table-wrap { width: 100%; min-width: 0; }
+    .missing-callout {
+      margin: -2px 0 12px;
+      padding: 9px 11px;
+      border-radius: 9px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .table-wrap {
+      width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th, td {
       padding: 9px 8px;
@@ -219,28 +257,8 @@
     @media (max-width: 600px) {
       .page { padding: 16px 12px 32px; }
       .panel { padding: 13px; }
-      .responsive-table thead { display: none; }
-      .responsive-table, .responsive-table tbody,
-      .responsive-table tr, .responsive-table td { display: block; width: 100%; }
-      .responsive-table tr {
-        margin-bottom: 10px;
-        padding: 8px 10px;
-        border: 1px solid var(--line);
-        border-radius: 10px;
-      }
-      .responsive-table td {
-        display: grid;
-        grid-template-columns: minmax(78px, 34%) minmax(0, 1fr);
-        gap: 8px;
-        padding: 6px 0;
-        border: 0;
-        text-align: left;
-      }
-      .responsive-table td::before {
-        content: attr(data-label);
-        color: var(--muted);
-        font-size: 13px;
-      }
+      .students-table { min-width: 680px; }
+      .review-table { min-width: 980px; }
     }
   </style>
 </head>
@@ -286,6 +304,10 @@
           <div class="skeleton-block wide"></div>
         </div>
       </div>
+      <section id="conclusion" class="conclusion hidden" aria-label="本班结论">
+        <p id="headline" class="conclusion-headline"></p>
+        <p id="next-action" class="conclusion-action"></p>
+      </section>
       <div class="metrics">
         <div class="metric"><span>已交</span><strong id="submitted">0</strong></div>
         <div class="metric"><span>名单</span><strong id="roster">0</strong></div>
@@ -299,6 +321,7 @@
             <h2>未交名单</h2>
             <button id="copy-missing" class="secondary" type="button" disabled>复制未交名单</button>
           </div>
+          <p id="missing-callout" class="missing-callout hidden"></p>
           <p id="missing-empty" class="empty">输入班级码</p>
           <ul id="missing-list" class="missing-list"></ul>
         </section>
@@ -310,8 +333,16 @@
           </div>
           <p id="students-empty" class="empty">输入班级码</p>
           <div id="students-wrap" class="table-wrap hidden">
-            <table class="responsive-table">
-              <thead><tr><th>学号</th><th>姓名</th><th>已交</th><th>作答</th><th>正确率</th></tr></thead>
+            <table class="responsive-table students-table">
+              <colgroup>
+                <col style="width: 14%">
+                <col style="width: 18%">
+                <col style="width: 12%">
+                <col style="width: 12%">
+                <col style="width: 14%">
+                <col style="width: 24%">
+              </colgroup>
+              <thead><tr><th>学号</th><th>姓名</th><th>已交</th><th>作答</th><th>正确率</th><th>建议</th></tr></thead>
               <tbody id="students-body"></tbody>
             </table>
           </div>
@@ -324,8 +355,18 @@
           </div>
           <p id="review-empty" class="empty">输入班级码</p>
           <div id="review-wrap" class="table-wrap hidden">
-            <table class="responsive-table">
-              <thead><tr><th>排名</th><th>题号</th><th>错人数</th><th>做题人数</th><th>错误率</th><th>平均用时</th><th>错因分布</th></tr></thead>
+            <table class="responsive-table review-table">
+              <colgroup>
+                <col style="width: 8%">
+                <col style="width: 11%">
+                <col style="width: 11%">
+                <col style="width: 12%">
+                <col style="width: 11%">
+                <col style="width: 12%">
+                <col style="width: 17%">
+                <col style="width: 20%">
+              </colgroup>
+              <thead><tr><th>排名</th><th>题号</th><th>错人数</th><th>做题人数</th><th>错误率</th><th>平均用时</th><th>错因分布</th><th>为什么讲它</th></tr></thead>
               <tbody id="review-body"></tbody>
             </table>
           </div>
