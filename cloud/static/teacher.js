@@ -30,6 +30,8 @@
     token: readStoredToken(),
     classInfo: readStoredClassInfo(),
     board: null,
+    showAllStudents: false,
+    manualPending: new Set(),
     retryAction: null,
     pendingCreate: null,
     readyTimer: null,
@@ -47,8 +49,8 @@
     "board-class-meta", "copy-class-secret", "refresh-board", "headline",
     "next-action", "stat-submitted", "stat-roster", "stat-missing", "stat-attempts",
     "copy-missing", "missing-callout", "missing-empty", "missing-chips", "students-empty",
-    "students-wrap", "students-body", "review-empty", "review-wrap",
-    "review-body", "export-xlsx", "logout",
+    "students-wrap", "students-body", "toggle-students", "review-empty", "review-wrap",
+    "review-body", "export-xlsx", "logout", "toast",
   ]) {
     elements[id] = document.getElementById(id);
   }
@@ -109,6 +111,18 @@
     elements.notice.textContent = text;
     elements.notice.classList.toggle("ok", tone === "ok");
     elements.notice.classList.toggle("hidden", !visible);
+  }
+
+  let toastTimer = null;
+
+  function showToast(text, isError = false) {
+    elements.toast.textContent = text;
+    elements.toast.classList.toggle("toast-error", isError);
+    elements.toast.classList.remove("hidden");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      elements.toast.classList.add("hidden");
+    }, 2400);
   }
 
   function showConnecting() {
@@ -216,6 +230,8 @@
     state.token = "";
     state.classInfo = null;
     state.board = null;
+    state.showAllStudents = false;
+    state.manualPending.clear();
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(LEGACY_TOKEN_KEY);
     sessionStorage.removeItem(CLASS_INFO_KEY);
@@ -384,14 +400,57 @@
       elements["students-wrap"].classList.add("hidden");
       elements["students-empty"].classList.remove("hidden");
       elements["students-empty"].textContent = "这个班还没导名单";
+      elements["toggle-students"].classList.add("hidden");
       return;
     }
-    for (const student of students) {
+    const visibleStudents = state.showAllStudents
+      ? students
+      : students.slice(0, 5);
+    for (const student of visibleStudents) {
       const row = document.createElement("tr");
+      const statusCell = document.createElement("td");
+      statusCell.dataset.label = "已交";
+      const statusControl = document.createElement("label");
+      statusControl.className = "submission-control";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = Boolean(student.submitted);
+      checkbox.disabled = (
+        student.submitted_by === "auto"
+        || state.manualPending.has(student.student_no)
+      );
+      checkbox.setAttribute(
+        "aria-label",
+        `${student.real_name || student.student_no}已交`,
+      );
+      if (student.submitted_by === "auto") {
+        checkbox.title = "已有作答记录，不能在这里取消";
+      } else if (state.manualPending.has(student.student_no)) {
+        checkbox.title = "正在保存";
+      }
+      checkbox.addEventListener("change", () => {
+        setManualSubmission(student.student_no, checkbox.checked);
+      });
+      const submittedLabel = document.createElement("span");
+      submittedLabel.textContent = "已交";
+      statusControl.append(checkbox, submittedLabel);
+      if (student.manual_submitted) {
+        const manualTag = document.createElement("span");
+        manualTag.className = "submission-source manual";
+        manualTag.textContent = "手工";
+        statusControl.append(manualTag);
+      }
+      if (student.submitted_by === "auto") {
+        const autoTag = document.createElement("span");
+        autoTag.className = "submission-source auto";
+        autoTag.textContent = "有作答";
+        statusControl.append(autoTag);
+      }
+      statusCell.append(statusControl);
       row.append(
         textCell(student.student_no, "学号"),
         textCell(student.real_name, "姓名"),
-        textCell(student.submitted ? "已交" : "还没交", "已交"),
+        statusCell,
         numberCell(student.attempt_count, "作答"),
         numberCell(percent(student.correct_rate), "正确率"),
         textCell(student.advice, "建议"),
@@ -401,6 +460,65 @@
     }
     elements["students-wrap"].classList.remove("hidden");
     elements["students-empty"].classList.add("hidden");
+    elements["toggle-students"].classList.toggle(
+      "hidden",
+      students.length <= 5,
+    );
+    elements["toggle-students"].textContent = (
+      state.showAllStudents ? "收起" : "展开全部"
+    );
+  }
+
+  async function setManualSubmission(studentNo, submitted) {
+    if (!state.board || state.manualPending.has(studentNo)) return;
+    const student = state.board.students.find(
+      (item) => item.student_no === studentNo,
+    );
+    if (!student) return;
+
+    const previousBoard = JSON.parse(JSON.stringify(state.board));
+    state.manualPending.add(studentNo);
+    student.manual_submitted = submitted;
+    student.submitted = Number(student.attempt_count || 0) > 0 || submitted;
+    student.submitted_by = Number(student.attempt_count || 0) > 0
+      ? "auto"
+      : (submitted ? "manual" : null);
+    if (!Number(student.attempt_count || 0)) {
+      student.advice = submitted ? "已手工标记" : "还没交";
+    }
+    renderBoard();
+    try {
+      const response = await fetchWithTimeout("/api/admin/manual_submit", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${state.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          class_code: state.board.class_code,
+          student_no: studentNo,
+          submitted,
+        }),
+      });
+      await parseResponse(response);
+      state.manualPending.delete(studentNo);
+      await loadBoard();
+      showToast(submitted ? "已标记为已交" : "已取消手工标记");
+    } catch (error) {
+      state.manualPending.delete(studentNo);
+      state.board = previousBoard;
+      renderBoard();
+      if (error.status === 401) {
+        clearSession();
+        showEntry();
+        setNotice("登录已失效，请重新输入班级码和口令");
+      } else {
+        showToast(
+          `标记失败：${error?.message || "请稍后重试"}`,
+          true,
+        );
+      }
+    }
   }
 
   function errorTypesFor(item) {
@@ -482,6 +600,7 @@
         headers: { Authorization: `Bearer ${state.token}` },
       });
       state.board = await parseResponse(response);
+      state.showAllStudents = false;
       renderBoard();
       setNotice("", "ok", false);
       clearRetry();
@@ -712,6 +831,11 @@
 
   elements["refresh-board"].addEventListener("click", () => {
     runButtonAction(elements["refresh-board"], loadBoard);
+  });
+
+  elements["toggle-students"].addEventListener("click", () => {
+    state.showAllStudents = !state.showAllStudents;
+    renderStudents();
   });
 
   elements["export-xlsx"].addEventListener("click", () => {
