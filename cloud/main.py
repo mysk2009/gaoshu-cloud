@@ -3,8 +3,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from cloud.config import Settings
@@ -46,6 +47,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved_settings
     app.state.database = database
+
+    @app.get("/board", include_in_schema=False)
+    def board_page_redirect(request: Request) -> RedirectResponse:
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(url=f"/teacher{query}", status_code=302)
+
     app.include_router(admin_router)
     app.include_router(sync_router)
     app.include_router(board_router)

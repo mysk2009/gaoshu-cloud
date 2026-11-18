@@ -122,6 +122,32 @@
       border-radius: 16px;
       background: var(--panel);
     }
+    .loading-skeleton { display: grid; gap: 16px; }
+    #dashboard-section.loading > *:not(.loading-skeleton) { display: none; }
+    #dashboard-section:not(.loading) > .loading-skeleton { display: none; }
+    .skeleton-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .skeleton-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .skeleton-block {
+      min-height: 116px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(90deg, #e8edf3 25%, #f5f7fa 45%, #e8edf3 65%);
+      background-size: 240% 100%;
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+    .skeleton-block.wide { grid-column: 1 / -1; min-height: 170px; }
+    @keyframes shimmer {
+      from { background-position: 100% 0; }
+      to { background-position: -100% 0; }
+    }
     .entry-grid, .create-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -201,6 +227,7 @@
       padding-bottom: 12px;
       border-bottom: 1px solid var(--line);
     }
+    .class-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .class-name { font-size: 17px; font-weight: 700; }
     .headline {
       margin-bottom: 8px;
@@ -216,6 +243,25 @@
       background: var(--soft);
       color: #1e3a8a;
       font-weight: 700;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .metric {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+    .metric span { display: block; color: var(--muted); font-size: 13px; }
+    .metric strong {
+      display: block;
+      margin-top: 4px;
+      font-size: clamp(24px, 5vw, 34px);
     }
     .section-head {
       display: flex;
@@ -234,13 +280,27 @@
       color: var(--warn);
       overflow-wrap: anywhere;
     }
+    .missing-callout {
+      margin: -2px 0 12px;
+      padding: 9px 11px;
+      border-radius: 9px;
+      background: #fff7ed;
+      color: var(--warn);
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
     .empty {
       margin: 0;
       padding: 22px 10px;
       text-align: center;
       color: var(--muted);
     }
-    .table-wrap { width: 100%; min-width: 0; }
+    .table-wrap {
+      width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th, td {
       padding: 10px 8px;
@@ -255,6 +315,9 @@
     .dashboard-actions { justify-content: flex-end; margin-top: 16px; }
     @media (max-width: 820px) {
       .create-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .skeleton-metrics, .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .skeleton-grid { grid-template-columns: minmax(0, 1fr); }
+      .skeleton-block.wide { grid-column: auto; }
     }
     @media (max-width: 620px) {
       .page { padding: 16px 12px 34px; }
@@ -273,7 +336,7 @@
       }
       .responsive-table td {
         display: grid;
-        grid-template-columns: minmax(72px, 32%) minmax(0, 1fr);
+        grid-template-columns: minmax(76px, 32%) minmax(0, 1fr);
         gap: 8px;
         padding: 6px 0;
         border: 0;
@@ -374,23 +437,49 @@
     </section>
 
     <section id="dashboard-section" class="hidden" aria-live="polite">
+      <div class="loading-skeleton" role="status" aria-label="正在加载看板">
+        <div class="skeleton-metrics">
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block"></div>
+        </div>
+        <div class="skeleton-grid">
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block"></div>
+          <div class="skeleton-block wide"></div>
+        </div>
+      </div>
+
       <section class="panel">
         <div class="class-id">
           <div>
             <div id="board-class-name" class="class-name"></div>
             <div id="board-class-meta" class="muted"></div>
           </div>
-          <button id="copy-class-secret" class="secondary" type="button">复制学生班级口令</button>
+          <div class="class-actions">
+            <button id="copy-class-secret" class="secondary" type="button">复制学生班级口令</button>
+            <button id="refresh-board" type="button">刷新看板</button>
+            <button id="logout" class="secondary" type="button">退出</button>
+          </div>
         </div>
         <p id="headline" class="headline"></p>
         <p id="next-action" class="next-action"></p>
       </section>
 
+      <div class="metrics" aria-label="班级统计">
+        <div class="metric"><span>已交</span><strong id="stat-submitted">0</strong></div>
+        <div class="metric"><span>名单</span><strong id="stat-roster">0</strong></div>
+        <div class="metric"><span>未交</span><strong id="stat-missing">0</strong></div>
+        <div class="metric"><span>总作答</span><strong id="stat-attempts">0</strong></div>
+      </div>
+
       <section class="panel">
         <div class="section-head">
-          <h2>还没交的人</h2>
-          <button id="copy-missing" class="secondary" type="button" disabled>复制名单</button>
+          <h2>未交名单</h2>
+          <button id="copy-missing" class="secondary" type="button" disabled>复制未交名单</button>
         </div>
+        <p id="missing-callout" class="missing-callout hidden"></p>
         <p id="missing-empty" class="empty">先填老师给你的班级码</p>
         <div id="missing-chips" class="chips hidden"></div>
       </section>
@@ -399,7 +488,7 @@
         <h2>每个人的情况</h2>
         <p id="students-empty" class="empty">先填老师给你的班级码</p>
         <div id="students-wrap" class="table-wrap hidden">
-          <table class="responsive-table">
+          <table class="responsive-table students-table">
             <thead>
               <tr><th>学号</th><th>姓名</th><th>已交</th><th>作答</th><th>正确率</th><th>建议</th></tr>
             </thead>
@@ -409,19 +498,31 @@
       </section>
 
       <section class="panel">
-        <h2>这节课建议讲这几道</h2>
+        <div class="section-head">
+          <h2>讲评清单</h2>
+          <button id="export-xlsx" type="button" disabled>导出 Excel</button>
+        </div>
         <p id="review-empty" class="empty">先填老师给你的班级码</p>
         <div id="review-wrap" class="table-wrap hidden">
-          <table class="responsive-table">
+          <table class="responsive-table review-table">
+            <colgroup>
+              <col style="width: 7%">
+              <col style="width: 10%">
+              <col style="width: 10%">
+              <col style="width: 11%">
+              <col style="width: 10%">
+              <col style="width: 12%">
+              <col style="width: 17%">
+              <col style="width: 23%">
+            </colgroup>
             <thead>
-              <tr><th>题号</th><th>错人数</th><th>做题人数</th><th>为什么讲</th></tr>
+              <tr>
+                <th>排名</th><th>题号</th><th>错人数</th><th>做题人数</th>
+                <th>错误率</th><th>平均用时</th><th>错因分布</th><th>为什么讲它</th>
+              </tr>
             </thead>
             <tbody id="review-body"></tbody>
           </table>
-        </div>
-        <div class="actions dashboard-actions">
-          <button id="export-xlsx" type="button" disabled>导出 Excel</button>
-          <button id="logout" class="secondary" type="button">退出</button>
         </div>
       </section>
     </section>

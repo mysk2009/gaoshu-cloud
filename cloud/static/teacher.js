@@ -5,15 +5,23 @@
     concept: "概念",
     calc: "计算",
     careless: "看错",
+    method: "方法",
+    none: "未标注",
   };
+  const TOKEN_KEY = "gs_cloud_teacher";
+  const LEGACY_TOKEN_KEY = "teacherToken";
+  const CLASS_INFO_KEY = "teacherClassInfo";
   const REQUEST_TIMEOUT_MS = 75000;
   const WAKE_MESSAGE =
     "正在连接服务器…（免费实例首次唤醒可能需要 30–60 秒，请勿关闭页面）";
+  const AUTO_LOGIN_FAILED_MESSAGE =
+    "自动登录失败，请确认班级码和管理口令";
+  const AUTO_LOGIN_LOADING_MESSAGE = "正在自动登录…";
   const SECURITY_GATEWAY_MESSAGE =
     "提交被安全网关临时拦截，请稍后重试（如果反复出现，请把学号里的特殊符号去掉）";
 
   const state = {
-    token: sessionStorage.getItem("teacherToken") || "",
+    token: readStoredToken(),
     classInfo: readStoredClassInfo(),
     board: null,
     retryAction: null,
@@ -29,17 +37,62 @@
     "create-class-name", "create-teacher-name", "create-secret",
     "hide-create", "student-card", "card-url", "card-code", "card-secret",
     "card-whole", "copy-whole", "dashboard-section", "board-class-name",
-    "board-class-meta", "copy-class-secret", "headline", "next-action",
-    "copy-missing", "missing-empty", "missing-chips", "students-empty",
+    "board-class-meta", "copy-class-secret", "refresh-board", "headline",
+    "next-action", "stat-submitted", "stat-roster", "stat-missing", "stat-attempts",
+    "copy-missing", "missing-callout", "missing-empty", "missing-chips", "students-empty",
     "students-wrap", "students-body", "review-empty", "review-wrap",
     "review-body", "export-xlsx", "logout",
   ]) {
     elements[id] = document.getElementById(id);
   }
 
+  function readStoredToken() {
+    return sessionStorage.getItem(TOKEN_KEY)
+      || sessionStorage.getItem(LEGACY_TOKEN_KEY)
+      || "";
+  }
+
+  function normalizeClassCode(value) {
+    return typeof value === "string" ? value.trim().toUpperCase() : "";
+  }
+
+  function readUrlCredentials() {
+    const query = new URLSearchParams(window.location.search);
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const firstValue = (...names) => {
+      for (const params of [query, hash]) {
+        for (const name of names) {
+          const value = params.get(name);
+          if (value != null && value !== "") return value;
+        }
+      }
+      return "";
+    };
+    return {
+      classCode: normalizeClassCode(firstValue("cc", "class_code")),
+      adminSecret: firstValue("pw", "admin_secret"),
+    };
+  }
+
+  function clearUrlCredentials(classCode) {
+    const query = new URLSearchParams(window.location.search);
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const hasUrlSecret =
+      query.has("pw")
+      || query.has("admin_secret")
+      || hash.has("pw")
+      || hash.has("admin_secret");
+    if (!hasUrlSecret) return;
+    window.history.replaceState(
+      null,
+      "",
+      `/teacher?cc=${encodeURIComponent(classCode)}`,
+    );
+  }
+
   function readStoredClassInfo() {
     try {
-      return JSON.parse(sessionStorage.getItem("teacherClassInfo") || "null");
+      return JSON.parse(sessionStorage.getItem(CLASS_INFO_KEY) || "null");
     } catch (_) {
       return null;
     }
@@ -123,8 +176,9 @@
     state.token = "";
     state.classInfo = null;
     state.board = null;
-    sessionStorage.removeItem("teacherToken");
-    sessionStorage.removeItem("teacherClassInfo");
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(LEGACY_TOKEN_KEY);
+    sessionStorage.removeItem(CLASS_INFO_KEY);
   }
 
   function saveSession(data) {
@@ -135,8 +189,10 @@
       teacher_name: data.teacher_name || "",
       class_secret: data.class_secret || "",
     };
-    sessionStorage.setItem("teacherToken", state.token);
-    sessionStorage.setItem("teacherClassInfo", JSON.stringify(state.classInfo));
+    sessionStorage.setItem(TOKEN_KEY, state.token);
+    // Keep the legacy key readable by the retained board page during rollout.
+    sessionStorage.setItem(LEGACY_TOKEN_KEY, state.token);
+    sessionStorage.setItem(CLASS_INFO_KEY, JSON.stringify(state.classInfo));
   }
 
   function percent(rate) {
@@ -207,6 +263,7 @@
   function resetDashboard() {
     state.board = null;
     elements["dashboard-section"].classList.add("hidden");
+    elements["dashboard-section"].classList.remove("loading");
     for (const id of [
       "students-wrap", "review-wrap", "missing-chips",
     ]) {
@@ -215,8 +272,14 @@
     elements["missing-empty"].textContent = "先填老师给你的班级码";
     elements["students-empty"].textContent = "先填老师给你的班级码";
     elements["review-empty"].textContent = "先填老师给你的班级码";
+    elements["missing-callout"].classList.add("hidden");
     elements["copy-missing"].disabled = true;
     elements["export-xlsx"].disabled = true;
+    for (const id of [
+      "stat-submitted", "stat-roster", "stat-missing", "stat-attempts",
+    ]) {
+      elements[id].textContent = "0";
+    }
     elements["students-body"].replaceChildren();
     elements["review-body"].replaceChildren();
   }
@@ -233,11 +296,24 @@
     setNotice("先填老师给你的班级码");
   }
 
+  function prefillEntry(credentials) {
+    if (credentials.classCode) {
+      elements["entry-code"].value = credentials.classCode;
+    }
+    if (credentials.adminSecret) {
+      elements["entry-secret"].value = credentials.adminSecret;
+    }
+  }
+
   function renderMissing() {
     const board = state.board;
     const missing = board?.missing || [];
     elements["missing-chips"].replaceChildren();
+    elements["missing-callout"].classList.remove("hidden");
     if (!missing.length) {
+      elements["missing-callout"].textContent = board?.totals.roster
+        ? "全员已交"
+        : "还没导名单";
       elements["missing-chips"].classList.add("hidden");
       elements["missing-empty"].classList.remove("hidden");
       elements["missing-empty"].textContent = board?.totals.roster
@@ -246,10 +322,14 @@
       elements["copy-missing"].disabled = true;
       return;
     }
+    elements["missing-callout"].textContent =
+      board?.missing_callout || "请提醒未交同学补交";
     for (const student of missing) {
       const chip = document.createElement("span");
       chip.className = "chip";
-      chip.textContent = student.real_name || student.student_no;
+      chip.textContent = student.real_name
+        ? `${student.real_name}（${student.student_no}）`
+        : student.student_no;
       elements["missing-chips"].append(chip);
     }
     elements["missing-chips"].classList.remove("hidden");
@@ -283,8 +363,7 @@
     elements["students-empty"].classList.add("hidden");
   }
 
-  function errorTypesFor(qid) {
-    const item = (state.board?.review_list || []).find((entry) => entry.qid === qid);
+  function errorTypesFor(item) {
     const types = Object.entries(item?.error_types || {})
       .sort((a, b) => b[1] - a[1])
       .map(([name, count]) => `${ERROR_LABEL[name] || "其他"}（${count} 人）`);
@@ -292,7 +371,7 @@
   }
 
   function renderReview() {
-    const review = state.board?.weak_top || [];
+    const review = state.board?.review_list || [];
     elements["review-body"].replaceChildren();
     if (!review.length) {
       elements["review-wrap"].classList.add("hidden");
@@ -305,10 +384,14 @@
     for (const item of review) {
       const row = document.createElement("tr");
       row.append(
+        numberCell(item.rank, "排名"),
         textCell(item.qid, "题号"),
         numberCell(item.wrong_devices, "错人数"),
         numberCell(item.devices, "做题人数"),
-        textCell(item.reason, "为什么讲"),
+        numberCell(percent(item.wrong_rate), "错误率"),
+        numberCell(item.avg_use_sec == null ? "—" : `${item.avg_use_sec} 秒`, "平均用时"),
+        textCell(errorTypesFor(item), "错因分布"),
+        textCell(item.reason, "为什么讲它"),
       );
       elements["review-body"].append(row);
     }
@@ -319,25 +402,41 @@
   function renderBoard() {
     const board = state.board;
     if (!board) return;
-    elements["board-class-name"].textContent = board.class_name || board.class_code;
+    elements["board-class-name"].textContent =
+      `当前班级：${board.class_name || board.class_code} · ${board.class_code}`;
     const teacherName = state.classInfo?.teacher_name || "";
+    const classSecret = state.classInfo?.class_secret || "";
     elements["board-class-meta"].textContent = [
-      `班级码 ${board.class_code}`,
       teacherName ? `任课老师 ${teacherName}` : "",
+      classSecret ? `学生口令 ${classSecret}` : "",
     ].filter(Boolean).join(" · ");
     elements["headline"].textContent = board.headline;
     elements["next-action"].textContent = board.next_action;
     elements["copy-class-secret"].disabled = !state.classInfo?.class_secret;
+    const totals = board.totals || {};
+    elements["stat-submitted"].textContent = String(totals.submitted || 0);
+    elements["stat-roster"].textContent = String(totals.roster || 0);
+    elements["stat-missing"].textContent = String(totals.missing || 0);
+    elements["stat-attempts"].textContent = String(totals.attempts || 0);
     renderMissing();
     renderStudents();
     renderReview();
     elements["export-xlsx"].disabled = false;
+    elements["dashboard-section"].classList.remove("loading");
     elements["dashboard-section"].classList.remove("hidden");
   }
 
   async function loadBoard() {
+    if (!state.token || !state.classInfo?.class_code) {
+      showEntry();
+      setNotice("请先输入班级码和管理口令");
+      return;
+    }
     setNotice("正在加载看板…");
     showConnecting();
+    state.board = null;
+    elements["dashboard-section"].classList.remove("hidden");
+    elements["dashboard-section"].classList.add("loading");
     try {
       const response = await fetchWithTimeout("/api/board", {
         headers: { Authorization: `Bearer ${state.token}` },
@@ -396,7 +495,7 @@
   });
 
   async function submitEntry() {
-    const classCode = elements["entry-code"].value.trim().toUpperCase();
+    const classCode = normalizeClassCode(elements["entry-code"].value);
     if (!classCode) {
       setNotice("先填老师给你的班级码");
       return;
@@ -406,6 +505,7 @@
     elements["entry-secret"].value = "";
     elements["entry-section"].classList.add("hidden");
     elements["create-section"].classList.add("hidden");
+    clearUrlCredentials(data.class_code);
     await loadBoard();
   }
 
@@ -415,7 +515,7 @@
   });
 
   async function submitCreate() {
-    const classCode = elements["create-code"].value.trim().toUpperCase();
+    const classCode = normalizeClassCode(elements["create-code"].value);
     const adminSecret = elements["create-secret"].value;
     if (!classCode) {
       setNotice("班级码不能为空");
@@ -452,8 +552,10 @@
     saveSession(entered);
     state.pendingCreate = null;
     elements["entry-section"].classList.add("hidden");
-    setNotice("班级已建好，学生卡片可以发给学生了", "ok");
+    elements["create-section"].classList.add("hidden");
+    clearUrlCredentials(entered.class_code);
     await loadBoard();
+    setNotice("班级已建好，学生卡片可以发给学生了", "ok");
   }
 
   elements["create-form"].addEventListener("submit", (event) => {
@@ -479,18 +581,30 @@
   });
 
   elements["copy-missing"].addEventListener("click", () => {
-    copyText(state.board?.missing_callout || "", "未交名单已复制");
+    const missing = state.board?.missing || [];
+    const missingText = missing
+      .map((student) => [
+        student.student_no,
+        student.real_name,
+      ].filter(Boolean).join(" "))
+      .join("\n");
+    copyText(missingText || state.board?.missing_callout || "", "未交名单已复制");
   });
 
   elements["copy-class-secret"].addEventListener("click", () => {
     copyText(state.classInfo?.class_secret || "", "学生班级口令已复制");
   });
 
+  elements["refresh-board"].addEventListener("click", () => {
+    runButtonAction(elements["refresh-board"], loadBoard);
+  });
+
   elements["export-xlsx"].addEventListener("click", async () => {
     if (!state.board) return;
     try {
       showConnecting();
-      const response = await fetchWithTimeout("/api/export.xlsx", {
+      const classCode = encodeURIComponent(state.board.class_code || "");
+      const response = await fetchWithTimeout(`/api/export.xlsx?class_code=${classCode}`, {
         headers: { Authorization: `Bearer ${state.token}` },
       });
       if (!response.ok) {
@@ -530,11 +644,46 @@
     showEntry();
   });
 
+  async function enterFromUrl(credentials) {
+    elements["entry-section"].classList.add("hidden");
+    elements["create-section"].classList.add("hidden");
+    setNotice(AUTO_LOGIN_LOADING_MESSAGE);
+    showConnecting();
+    try {
+      const data = await enterClass(
+        credentials.classCode,
+        credentials.adminSecret,
+      );
+      saveSession(data);
+      elements["entry-secret"].value = "";
+      clearUrlCredentials(data.class_code);
+      await loadBoard();
+    } catch (error) {
+      clearSession();
+      showEntry();
+      prefillEntry(credentials);
+      const message = error?.status === 401 || error?.status === 404
+        ? AUTO_LOGIN_FAILED_MESSAGE
+        : error?.message || AUTO_LOGIN_FAILED_MESSAGE;
+      setNotice(message);
+      if (error?.isTimeout || error?.cause) {
+        showRetry(() => enterFromUrl(credentials));
+      }
+    }
+  }
+
   resetDashboard();
-  if (state.token && state.classInfo) {
+  const urlCredentials = readUrlCredentials();
+  if (urlCredentials.classCode && urlCredentials.adminSecret) {
+    enterFromUrl(urlCredentials);
+  } else if (state.token && state.classInfo) {
     elements["entry-section"].classList.add("hidden");
     loadBoard();
   } else {
     showEntry();
+    prefillEntry(urlCredentials);
+    if (urlCredentials.classCode || urlCredentials.adminSecret) {
+      setNotice("请补全班级码和管理口令");
+    }
   }
 })();
