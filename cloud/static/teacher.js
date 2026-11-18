@@ -477,7 +477,11 @@
 
   function showStudentCard(info) {
     const url = window.location.origin;
-    const whole = `网址 ${url} ｜ 班级码 ${info.class_code} ｜ 班级口令 ${info.class_secret}`;
+    const whole = [
+      `云端看板：${url}/teacher`,
+      `班级码：${info.class_code}`,
+      `学生口令：${info.class_secret}`,
+    ].join("\n");
     elements["card-url"].textContent = url;
     elements["card-code"].textContent = info.class_code;
     elements["card-secret"].textContent = info.class_secret;
