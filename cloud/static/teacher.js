@@ -14,6 +14,12 @@
   const REQUEST_TIMEOUT_MS = 75000;
   const WAKE_MESSAGE =
     "正在连接服务器…（免费实例首次唤醒可能需要 30–60 秒，请勿关闭页面）";
+  const CONNECTED_MESSAGE = "服务器已连接";
+  const HEALTH_FAILED_MESSAGE = "连不上服务器，请点重试";
+  const REQUEST_FAILED_MESSAGE =
+    "请求超时：服务器可能正在唤醒，点重试";
+  const LOGIN_FAILED_STATUS_MESSAGE = "服务器已连接（登录没成功）";
+  const OPERATION_FAILED_STATUS_MESSAGE = "服务器已连接（操作没成功）";
   const AUTO_LOGIN_FAILED_MESSAGE =
     "自动登录失败，请确认班级码和管理口令";
   const AUTO_LOGIN_LOADING_MESSAGE = "正在自动登录…";
@@ -27,6 +33,7 @@
     retryAction: null,
     pendingCreate: null,
     readyTimer: null,
+    connectionId: 0,
   };
 
   const elements = {};
@@ -106,18 +113,42 @@
 
   function showConnecting() {
     clearTimeout(state.readyTimer);
+    state.connectionId += 1;
     elements["connection-status"].classList.remove("hidden", "ready");
     elements["connection-text"].textContent = WAKE_MESSAGE;
+    return state.connectionId;
   }
 
-  function showConnected() {
+  function showConnected(
+    connectionId,
+    text = CONNECTED_MESSAGE,
+    autoHide = true,
+  ) {
+    if (connectionId !== state.connectionId) return false;
     clearTimeout(state.readyTimer);
     elements["connection-status"].classList.remove("hidden");
     elements["connection-status"].classList.add("ready");
-    elements["connection-text"].textContent = "服务器已连接";
-    state.readyTimer = setTimeout(() => {
-      elements["connection-status"].classList.add("hidden");
-    }, 2200);
+    elements["connection-text"].textContent = text;
+    if (autoHide) {
+      state.readyTimer = setTimeout(() => {
+        if (connectionId === state.connectionId) {
+          elements["connection-status"].classList.add("hidden");
+        }
+      }, 3000);
+    }
+    return true;
+  }
+
+  function showConnectionFailure(connectionId, text = REQUEST_FAILED_MESSAGE) {
+    if (connectionId !== state.connectionId) return false;
+    clearTimeout(state.readyTimer);
+    elements["connection-status"].classList.remove("hidden", "ready");
+    elements["connection-text"].textContent = text;
+    return true;
+  }
+
+  function isConnectionError(error) {
+    return Boolean(error?.isTimeout || error?.isNetworkError || error?.cause);
   }
 
   function showRetry(action) {
@@ -140,11 +171,12 @@
       });
     } catch (error) {
       if (error?.name === "AbortError") {
-        const timeoutError = new Error("服务器还没醒，请点「重试」");
+        const timeoutError = new Error(REQUEST_FAILED_MESSAGE);
         timeoutError.isTimeout = true;
         throw timeoutError;
       }
       const networkError = new Error("网络连接失败，请检查网络后重试");
+      networkError.isNetworkError = true;
       networkError.cause = error;
       throw networkError;
     } finally {
@@ -158,14 +190,22 @@
     clearRetry();
     button.disabled = true;
     button.textContent = "正在连接…";
-    showConnecting();
+    const connectionId = showConnecting();
     try {
       await action();
     } catch (error) {
       setNotice(error?.message || "连接失败，请稍后重试");
-      if (error?.isTimeout) {
-        showRetry(() => runButtonAction(button, action));
+      const failureId = error?.requestId || state.connectionId;
+      if (isConnectionError(error)) {
+        showConnectionFailure(failureId);
+      } else {
+        showConnected(
+          failureId,
+          OPERATION_FAILED_STATUS_MESSAGE,
+          false,
+        );
       }
+      showRetry(() => runButtonAction(button, action));
     } finally {
       button.disabled = false;
       button.textContent = originalText;
@@ -433,7 +473,7 @@
       return;
     }
     setNotice("正在加载看板…");
-    showConnecting();
+    const connectionId = showConnecting();
     state.board = null;
     elements["dashboard-section"].classList.remove("hidden");
     elements["dashboard-section"].classList.add("loading");
@@ -445,15 +485,25 @@
       renderBoard();
       setNotice("", "ok", false);
       clearRetry();
-      showConnected();
+      showConnected(connectionId);
     } catch (error) {
       if (error.status === 401) {
         clearSession();
         showEntry();
         setNotice("登录已失效，请重新输入班级码和管理口令");
+        showConnected(connectionId, LOGIN_FAILED_STATUS_MESSAGE, false);
         return;
       }
       setNotice(error?.message || "看板加载失败，请稍后重试");
+      if (isConnectionError(error)) {
+        showConnectionFailure(connectionId);
+      } else {
+        showConnected(
+          connectionId,
+          OPERATION_FAILED_STATUS_MESSAGE,
+          false,
+        );
+      }
       showRetry(loadBoard);
     }
   }
@@ -463,16 +513,76 @@
       setNotice("先填老师给你的班级码");
       return null;
     }
+    const connectionId = showConnecting();
+    try {
+      const response = await fetchWithTimeout("/api/teacher/enter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          class_code: classCode,
+          admin_secret: adminSecret,
+        }),
+      });
+      return await parseResponse(response);
+    } catch (error) {
+      error.requestId = connectionId;
+      throw error;
+    }
+  }
+
+  async function exportBoard() {
+    if (!state.board) return;
     showConnecting();
-    const response = await fetchWithTimeout("/api/teacher/enter", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        class_code: classCode,
-        admin_secret: adminSecret,
-      }),
+    const classCode = encodeURIComponent(state.board.class_code || "");
+    const response = await fetchWithTimeout(`/api/export.xlsx?class_code=${classCode}`, {
+      headers: { Authorization: `Bearer ${state.token}` },
     });
-    return parseResponse(response);
+    if (!response.ok) {
+      const isJson = hasJsonContentType(response);
+      const data = await readJsonBody(response);
+      const error = new Error(
+        !isJson && response.status >= 400
+          ? SECURITY_GATEWAY_MESSAGE
+          : data.detail || `导出失败（${response.status}）`,
+      );
+      error.status = response.status;
+      throw error;
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = match ? match[1] : `${state.board.class_code}_board.xlsx`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    clearRetry();
+    showConnected(state.connectionId);
+  }
+
+  async function checkHealth(onReady) {
+    const connectionId = showConnecting();
+    try {
+      const response = await fetchWithTimeout("/api/health", {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(`健康检查失败（${response.status}）`);
+      }
+      clearRetry();
+      showConnected(connectionId);
+      if (connectionId === state.connectionId && typeof onReady === "function") {
+        onReady();
+      }
+    } catch (error) {
+      if (connectionId !== state.connectionId) return;
+      showConnectionFailure(connectionId, HEALTH_FAILED_MESSAGE);
+      setNotice("连不上服务器，请点重试");
+      showRetry(() => checkHealth(onReady));
+    }
   }
 
   function showStudentCard(info) {
@@ -603,44 +713,8 @@
     runButtonAction(elements["refresh-board"], loadBoard);
   });
 
-  elements["export-xlsx"].addEventListener("click", async () => {
-    if (!state.board) return;
-    try {
-      showConnecting();
-      const classCode = encodeURIComponent(state.board.class_code || "");
-      const response = await fetchWithTimeout(`/api/export.xlsx?class_code=${classCode}`, {
-        headers: { Authorization: `Bearer ${state.token}` },
-      });
-      if (!response.ok) {
-        const isJson = hasJsonContentType(response);
-        const data = await readJsonBody(response);
-        if (response.status === 401) {
-          clearSession();
-          showEntry();
-        }
-        throw new Error(
-          !isJson && response.status >= 400
-            ? SECURITY_GATEWAY_MESSAGE
-            : data.detail || `导出失败（${response.status}）`,
-        );
-      }
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition") || "";
-      const match = disposition.match(/filename="([^"]+)"/);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = match ? match[1] : `${state.board.class_code}_board.xlsx`;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      clearRetry();
-      showConnected();
-    } catch (error) {
-      setNotice(error?.message || "导出失败，请稍后重试");
-      if (error.isTimeout || error.cause) showRetry(loadBoard);
-    }
+  elements["export-xlsx"].addEventListener("click", () => {
+    runButtonAction(elements["export-xlsx"], exportBoard);
   });
 
   elements["logout"].addEventListener("click", () => {
@@ -666,28 +740,44 @@
       clearSession();
       showEntry();
       prefillEntry(credentials);
-      const message = error?.status === 401 || error?.status === 404
-        ? AUTO_LOGIN_FAILED_MESSAGE
-        : error?.message || AUTO_LOGIN_FAILED_MESSAGE;
-      setNotice(message);
-      if (error?.isTimeout || error?.cause) {
-        showRetry(() => enterFromUrl(credentials));
+      setNotice(AUTO_LOGIN_FAILED_MESSAGE);
+      const failureId = error?.requestId || state.connectionId;
+      if (isConnectionError(error)) {
+        showConnectionFailure(failureId);
+      } else {
+        showConnected(
+          failureId,
+          LOGIN_FAILED_STATUS_MESSAGE,
+          false,
+        );
       }
+      showRetry(() => enterFromUrl(credentials));
     }
   }
 
-  resetDashboard();
-  const urlCredentials = readUrlCredentials();
-  if (urlCredentials.classCode && urlCredentials.adminSecret) {
-    enterFromUrl(urlCredentials);
-  } else if (state.token && state.classInfo) {
-    elements["entry-section"].classList.add("hidden");
-    loadBoard();
-  } else {
+  function routeAfterHealth(urlCredentials) {
+    if (urlCredentials.classCode && urlCredentials.adminSecret) {
+      enterFromUrl(urlCredentials);
+      return;
+    }
+    if (state.token && state.classInfo) {
+      elements["entry-section"].classList.add("hidden");
+      loadBoard();
+      return;
+    }
     showEntry();
     prefillEntry(urlCredentials);
     if (urlCredentials.classCode || urlCredentials.adminSecret) {
       setNotice("请补全班级码和管理口令");
     }
   }
+
+  async function initialize() {
+    resetDashboard();
+    const urlCredentials = readUrlCredentials();
+    prefillEntry(urlCredentials);
+    await checkHealth(() => routeAfterHealth(urlCredentials));
+  }
+
+  initialize();
 })();
