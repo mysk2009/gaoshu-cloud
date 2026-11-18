@@ -248,3 +248,135 @@ board curl status=200
   DOM、curl 状态码和静态检查验证。
 - 按范围没有清理 `render.yaml` 中的 `CLOUD_TEACHER_PASSWORD`；其上仅有未被
   业务使用的配置装载，建议后续单独清理。
+
+## M10B 线上 P0 修复
+
+日期：2026-11-18
+起点：`557dc08`
+
+| 项目 | 提交 | 内容 |
+| --- | --- | --- |
+| F1 | `1fd9383` | 修复 PostgreSQL 的关联子查询未分组列错误 |
+| F2 | `dcef430` | 审计六个文件的全部 SQL，并统一冲突写入写法 |
+| F3 | `a285a0a` | 启动迁移幂等回填历史 `attempts_cloud.student_no` |
+| F4 | `4235495` | 增加静态 SQL lint、反向故障证明和导出接口回归 |
+
+### F1 PostgreSQL GroupingError
+
+线上 `/api/board` 与 `/api/export.xlsx` 返回 500。根因是
+`cloud/routes_board.py` 的 `student_rows` 在 SELECT 列表里通过关联子查询引用外层
+`r.class_code`，但原 `GROUP BY r.student_no, r.real_name` 没有该列。SQLite 容忍这种
+写法，PostgreSQL 报：
+
+```text
+psycopg.errors.GroupingError: subquery uses ungrouped column "r.class_code" from outer query
+```
+
+处理后的分组为 `GROUP BY r.class_code, r.student_no, r.real_name`。外层本身固定按一个
+`class_code` 过滤，因此新增分组列不改变两个后端的逐学生聚合结果。
+
+### F2 全量 SQL 审计
+
+| 文件:行号 | 写法 | 是否会炸 postgres | 处理（已改/安全理由） |
+| --- | --- | --- | --- |
+| `cloud/routes_board.py:172`、`:178`、`:194` | 聚合查询的 SELECT 子查询引用外层 `r.class_code`；GROUP BY 原缺少该列 | 会 | 已改：`GROUP BY r.class_code, r.student_no, r.real_name` |
+| `cloud/routes_board.py:27`、`:37` | CTE 用 `LEFT JOIN devices` 和 `COALESCE(NULLIF(...))` 解析学号 | 否 | 无 GROUP BY；`student_no` 两端均为 TEXT |
+| `cloud/routes_board.py:55` | `SELECT class_name ... WHERE class_code = ?` | 否 | 无 GROUP BY |
+| `cloud/routes_board.py:161`、`:164` | 名单查询并 `ORDER BY student_no` | 否 | 无 GROUP BY/DISTINCT；排序列已在 SELECT 与 WHERE 对应表中 |
+| `cloud/routes_board.py:203`、`:215` | 错因聚合，选择 `r.student_no, a.error_type` | 否 | 两个非聚合列均在 GROUP BY |
+| `cloud/routes_board.py:223`、`:237` | 题目聚合，选择 `a.qid` | 否 | 非聚合列在 GROUP BY；其余均为聚合 |
+| `cloud/routes_board.py:245`、`:258` | 题目错因聚合，选择 `a.qid, a.error_type` | 否 | 两个非聚合列均在 GROUP BY |
+| `cloud/routes_board.py:265`、`:270` | 未绑定设备查询，`ORDER BY last_at DESC, device_uuid` | 否 | 无 GROUP BY/DISTINCT；ORDER BY 列均在 SELECT |
+| `cloud/routes_board.py:278` | 已绑定作答/设备总数 | 否 | 全部为聚合，无 GROUP BY |
+| `cloud/routes_board.py:185`、`:227`、`:254` | `a.correct = 1` / `a.correct = 0` | 否 | `schema.py:50` 定义 `correct SMALLINT`，不是 BOOLEAN |
+| `cloud/routes_admin.py:42`、`:91`、`:123`、`:199`、`:257` | 班级/名单存在性与计数查询 | 否 | 无 GROUP BY；聚合计数的非聚合列无遗漏 |
+| `cloud/routes_admin.py:101`、`:112`、`:206`、`:264`、`:379` | 名单/班级/设备的 INSERT、UPDATE | 否 | 无 SQLite 专有语法；字段与 TEXT/INTEGER schema 一致 |
+| `cloud/routes_admin.py:320`、`:324`、`:333`、`:343` | 名单关联设备子查询与 `ORDER BY roster_cloud.student_no` | 否 | 无 GROUP BY；两个关联子查询均只返回单列并用 LIMIT 1 |
+| `cloud/routes_sync.py:36`、`:131`、`:159`、`:187`、`:218`、`:243`、`:344` | 健康检查、口令/名单/设备存在性和作答计数 | 否 | 无 GROUP BY；计数字段使用聚合 |
+| `cloud/routes_sync.py:258`、`:262` | 作答写入 | 否 | 已改：删除 SQLite 专用 `INSERT OR IGNORE` 分支，两端统一 `ON CONFLICT(device_uuid, attempt_id) DO NOTHING` |
+| `cloud/routes_sync.py:303`、`:324`、`:327` | 设备 INSERT/UPDATE 与 `COALESCE(attempts, 0)` | 否 | 无 SQLite 方言；`attempts` 在 schema 中为 INTEGER |
+| `cloud/routes_teacher.py:100`、`:104` | 班级 INSERT 与主键冲突忽略 | 否 | `ON CONFLICT(class_code)` 为 SQLite 与 PostgreSQL 共同支持；主键定义在 `schema.py:9` |
+| `cloud/routes_teacher.py:145` | 教师进班读取四列 | 否 | 无 GROUP BY |
+| `cloud/schema.py:8`、`:18`、`:31`、`:44`、`:59` | 建表与索引 DDL | 否 | 均为两端共同支持的 `CREATE ... IF NOT EXISTS`；无 `AUTOINCREMENT` |
+| `cloud/schema.py:65` | 历史学号关联子查询回填 | 否 | UPDATE 本身无 GROUP BY；子查询使用目标表限定名 `attempts_cloud.*` 消除歧义 |
+| `cloud/schema.py:93`、`:118` | `PRAGMA table_info(...)` | 否 | 仅在 `database.backend == "sqlite"` 分支执行 |
+| `cloud/schema.py:102` | `information_schema.columns` 查询 | 否 | 仅 PostgreSQL 分支；无 GROUP BY |
+| `cloud/schema.py:111`、`:123`、`:127` | 增列迁移 | 否 | SQLite 先查 PRAGMA 再加列；PostgreSQL 使用 `ADD COLUMN IF NOT EXISTS` |
+| `cloud/export_xlsx.py` | 无 SQL | 否 | 只是调用 `build_board_data` 后生成 XLSX |
+
+第 3 类判定：代码只有聚合函数内部的 `COUNT(DISTINCT ...)`，没有顶层
+`SELECT DISTINCT ... ORDER BY ...`，因此不存在 PostgreSQL 的 DISTINCT/ORDER BY
+列归属错误。
+
+第 4 类判定：
+
+- `INSERT OR IGNORE` 原写法只在 SQLite 分支出现，未直接发送给 PostgreSQL；F2 仍统一为
+  `ON CONFLICT ... DO NOTHING`，减少分支漂移。
+- 六个目标文件没有 `AUTOINCREMENT`。
+- SQL 中没有 `||` 拼接；Python 侧的时间、文件名拼接与数据库 NULL 语义无关。
+- `correct` 在 `cloud/schema.py:50` 明确定义为 `SMALLINT`，因此 `= 0` / `= 1` 合法。
+- `PRAGMA` 仅在 SQLite 分支执行；PostgreSQL 只走 `information_schema` 与
+  `ALTER TABLE ... IF NOT EXISTS` 分支。
+
+### F3 历史作答学号回填
+
+`ensure_schema()` 在确认 `student_no` 列存在后执行一次关联子查询回填。UPDATE 只命中
+`student_no IS NULL OR student_no = ''` 且存在同 `device_uuid + class_code` 匹配设备的行：
+
+- 已有非空 `student_no` 的行不会改变；
+- 无匹配设备或仅跨班匹配的行保持 NULL；
+- SQLite 与 PostgreSQL 使用同一 SQL，没有依赖后端专属的 `UPDATE ... FROM`；
+- 日志按 `cursor.rowcount` 输出；若驱动不提供有效 rowcount，则按 0 输出并标注
+  `rowcount unavailable`。
+
+回填专项验收原始输出：
+
+```text
+[cloud] backfilled attempts.student_no rows=1
+[first-run] {'A1': 'S1', 'A2': None, 'A3': None}
+[cloud] backfilled attempts.student_no rows=0
+[second-run] {'A1': 'S-EXISTING', 'A2': None, 'A3': None}
+[PASS] M10B student_no backfill is idempotent
+```
+
+### F4 验收
+
+改动前的 `python cloud/m10_acceptance.py` 已通过；修复后再次通过，并新增
+`/api/export.xlsx` 状态码 200 与 ZIP 文件头断言。最终原始输出：
+
+```text
+C:\Users\mysk2008\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+[cloud] backend=sqlite path=:memory:
+[schema-before] {"columns": ["device_uuid", "attempt_id", "class_code", "qid", "correct", "use_sec", "error_type", "ts", "received_at"]}
+[cloud] backfilled attempts.student_no rows=0
+[migration-after] {"columns": ["device_uuid", "attempt_id", "class_code", "qid", "correct", "use_sec", "error_type", "ts", "received_at", "student_no"]}
+[step-1] {"class_code": "M10F2", "roster": {"ok": true, "imported": 2, "updated": 0, "total": 2}}
+[step-2] {"sync": {"accepted": 3, "duplicated": 0, "skipped": 0, "total_received": 3, "server_time": "2026-11-18T07:56:40"}, "student": {"student_no": "S1", "real_name": "学生一", "submitted": true, "attempt_count": 3, "correct_count": 1, "correct_rate": 0.3333}, "totals": {"roster": 2, "submitted": 1, "missing": 1, "attempts": 3, "devices": 1}, "export_bytes": 4684, "review_qids": ["Q2", "Q3", "Q1"]}
+[legacy-null-fallback] {"student": {"student_no": "S1", "real_name": "学生一", "submitted": true, "attempt_count": 4, "correct_count": 2, "correct_rate": 0.5}, "totals": {"roster": 2, "submitted": 1, "missing": 1, "attempts": 4, "devices": 1}}
+[step-3] {"ok": true, "unbound": 1}
+[step-4] {"student": {"student_no": "S1", "real_name": "学生一", "submitted": true, "attempt_count": 3, "correct_count": 1, "correct_rate": 0.3333}, "totals": {"roster": 2, "submitted": 1, "missing": 1, "attempts": 3, "devices": 1}, "unbound_devices": [{"device_uuid": "D1", "nickname": null, "attempts": 3, "last_at": "2026-11-18T07:56:40"}]}
+[step-5] {"sync": {"accepted": 1, "duplicated": 0, "skipped": 0, "total_received": 4, "server_time": "2026-11-18T07:56:40"}, "student": {"student_no": "S1", "real_name": "学生一", "submitted": true, "attempt_count": 4, "correct_count": 2, "correct_rate": 0.5}, "totals": {"roster": 2, "submitted": 1, "missing": 1, "attempts": 4, "devices": 2}}
+[step-6] {"duplicate_and_dirty": {"accepted": 0, "duplicated": 1, "skipped": 1, "total_received": 4, "server_time": "2026-11-18T07:56:40"}, "stored_rows": [["D1", "S1", 3], ["D2", "S1", 1]]}
+[PASS] M10 F2 acceptance passed
+[cloud] backfilled attempts.student_no rows=1
+[first-run] {'A1': 'S1', 'A2': None, 'A3': None}
+[cloud] backfilled attempts.student_no rows=0
+[second-run] {'A1': 'S-EXISTING', 'A2': None, 'A3': None}
+[PASS] M10B student_no backfill is idempotent
+[sql-postgres-lint] self-test passed
+[sql-postgres-lint] clean: scanned 6 files
+```
+
+反向证明 lint 不是恒绿：临时把 `GROUP BY` 改回故障写法后，命令退出码为 1，原始输出为：
+
+```text
+cloud/routes_board.py:178: ungrouped SELECT reference r.class_code; GROUP BY at line 194
+```
+
+随后已恢复正确分组，最终扫描结果为 `clean: scanned 6 files`。
+
+### PostgreSQL 验证边界
+
+本机无 postgres，postgres 行为由 F2 静态审计 + F4-必做2 的 lint 覆盖；线上由
+Hermes 部署后实测。本次没有把 SQLite 回归当作 PostgreSQL 运行证据。
