@@ -227,6 +227,59 @@
       font-weight: 600;
       overflow-wrap: anywhere;
     }
+    .submission-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 28px;
+      cursor: pointer;
+    }
+    .submission-control input {
+      width: 17px;
+      min-width: 17px;
+      height: 17px;
+      min-height: 17px;
+      margin: 0;
+      accent-color: var(--brand);
+    }
+    .submission-control input:disabled {
+      cursor: default;
+    }
+    .submission-source {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 5px;
+      font-size: 11px;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+    .submission-source.manual {
+      background: #ecfdf3;
+      color: #067647;
+    }
+    .submission-source.auto {
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+    .toast {
+      position: fixed;
+      z-index: 20;
+      right: 20px;
+      bottom: 20px;
+      max-width: min(360px, calc(100vw - 32px));
+      padding: 11px 14px;
+      border: 1px solid #a7f3d0;
+      border-radius: 10px;
+      background: #ecfdf3;
+      color: #065f46;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, .16);
+      overflow-wrap: anywhere;
+    }
+    .toast.toast-error {
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+    }
     .table-wrap {
       width: 100%;
       min-width: 0;
@@ -374,6 +427,7 @@
       </div>
     </section>
   </main>
+  <div id="toast" class="toast hidden" role="status"></div>
   <script src="/static/board.js"></script>
 </body>
 </html>

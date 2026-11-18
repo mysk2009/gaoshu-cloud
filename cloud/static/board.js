@@ -18,6 +18,7 @@
     board: null,
     showAllStudents: false,
     retryAction: null,
+    manualPending: new Set(),
   };
 
   const elements = {
@@ -50,6 +51,7 @@
     reviewWrap: document.getElementById("review-wrap"),
     reviewBody: document.getElementById("review-body"),
     exportXlsx: document.getElementById("export-xlsx"),
+    toast: document.getElementById("toast"),
   };
 
   function readStoredClassInfo() {
@@ -63,6 +65,19 @@
   function setNotice(text, visible = true) {
     elements.notice.textContent = text;
     elements.notice.classList.toggle("hidden", !visible);
+  }
+
+  let toastTimer = null;
+
+  function showToast(text, isError = false) {
+    if (!elements.toast) return;
+    elements.toast.textContent = text;
+    elements.toast.classList.toggle("toast-error", isError);
+    elements.toast.classList.remove("hidden");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      elements.toast.classList.add("hidden");
+    }, 2400);
   }
 
   function showRetry(action) {
@@ -130,6 +145,59 @@
     return typeof value === "string" ? value.trim() : "";
   }
 
+  function refreshSubmissionSummary() {
+    if (!state.board) return;
+    const students = Array.isArray(state.board.students)
+      ? state.board.students
+      : [];
+    let submittedCount = 0;
+    let manualCount = 0;
+    const missing = [];
+    for (const student of students) {
+      const answered = Number(student.attempt_count || 0) > 0;
+      const manual = Boolean(student.manual_submitted);
+      student.manual_submitted = manual;
+      student.submitted = answered || manual;
+      student.submitted_by = answered ? "auto" : (manual ? "manual" : null);
+      if (student.submitted) submittedCount += 1;
+      if (manual) manualCount += 1;
+      if (!student.submitted) {
+        missing.push({
+          student_no: student.student_no,
+          real_name: student.real_name,
+          manual_submitted: false,
+        });
+      }
+    }
+
+    const rosterCount = Number(state.board.totals?.roster || students.length);
+    const manualSuffix = manualCount
+      ? `（其中 ${manualCount} 人手工标记）`
+      : "";
+    state.board.totals = {
+      ...(state.board.totals || {}),
+      roster: rosterCount,
+      submitted: submittedCount,
+      manual_submitted: manualCount,
+      missing: missing.length,
+    };
+    state.board.missing = missing;
+    state.board.missing_callout = missing
+      .map((student) => student.real_name || student.student_no)
+      .join("、");
+    state.board.headline = (
+      `名单 ${rosterCount} 人，${submittedCount} 人已交`
+      + `${manualSuffix}，${missing.length} 人未交`
+    );
+    const reviewCount = Array.isArray(state.board.review_list)
+      ? state.board.review_list.length
+      : 0;
+    state.board.next_action = reviewCount
+      ? `建议这节课先讲下面 ${reviewCount} 道题`
+        + (missing.length ? `，再让没交的 ${missing.length} 人补上练习` : "")
+      : "这节课没有需要集中讲的题，按逐人建议单独跟进";
+  }
+
   function renderConclusion() {
     if (!state.board) {
       elements.conclusion.classList.add("hidden");
@@ -165,10 +233,44 @@
     const visible = state.showAllStudents ? students : students.slice(0, 5);
     for (const student of visible) {
       const tr = document.createElement("tr");
+      const statusCell = document.createElement("td");
+      statusCell.dataset.label = "是否已交";
+      const statusControl = document.createElement("label");
+      statusControl.className = "submission-control";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = Boolean(student.submitted);
+      checkbox.disabled = student.submitted_by === "auto";
+      checkbox.setAttribute(
+        "aria-label",
+        `${student.real_name || student.student_no}已交`,
+      );
+      if (checkbox.disabled) {
+        checkbox.title = "已有作答记录，不能在这里取消";
+      }
+      checkbox.addEventListener("change", () => {
+        setManualSubmission(student.student_no, checkbox.checked);
+      });
+      const submittedLabel = document.createElement("span");
+      submittedLabel.textContent = "已交";
+      statusControl.append(checkbox, submittedLabel);
+      if (student.manual_submitted) {
+        const manualTag = document.createElement("span");
+        manualTag.className = "submission-source manual";
+        manualTag.textContent = "手工";
+        statusControl.append(manualTag);
+      }
+      if (student.submitted_by === "auto") {
+        const autoTag = document.createElement("span");
+        autoTag.className = "submission-source auto";
+        autoTag.textContent = "有作答";
+        statusControl.append(autoTag);
+      }
+      statusCell.append(statusControl);
       tr.append(
         cell(student.student_no, "学号"),
         cell(student.real_name, "姓名"),
-        cell(student.submitted ? "已交" : "未交", "是否已交"),
+        statusCell,
         cell(student.attempt_count, "作答数", true),
         cell(percent(student.correct_rate), "正确率", true),
         cell(student.advice, "建议"),
@@ -179,6 +281,52 @@
     elements.studentsEmpty.classList.add("hidden");
     elements.toggleStudents.classList.toggle("hidden", students.length <= 5);
     elements.toggleStudents.textContent = state.showAllStudents ? "收起" : "展开全部";
+  }
+
+  async function setManualSubmission(studentNo, submitted) {
+    if (!state.board || state.manualPending.has(studentNo)) return;
+    const student = state.board.students.find(
+      (item) => item.student_no === studentNo,
+    );
+    if (!student) return;
+
+    const previousBoard = JSON.parse(JSON.stringify(state.board));
+    state.manualPending.add(studentNo);
+    student.manual_submitted = submitted;
+    refreshSubmissionSummary();
+    renderDashboard();
+    try {
+      const response = await fetchWithTimeout("/api/admin/manual_submit", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${state.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          class_code: state.board.class_code,
+          student_no: studentNo,
+          submitted,
+        }),
+      });
+      const data = await parseResponse(response);
+      const current = state.board.students.find(
+        (item) => item.student_no === studentNo,
+      );
+      if (current) current.manual_submitted = Boolean(data.manual_submitted);
+      refreshSubmissionSummary();
+      renderDashboard();
+      showToast(submitted ? "已标记为已交" : "已取消手工标记");
+    } catch (error) {
+      state.board = previousBoard;
+      renderDashboard();
+      if (error.status === 401) {
+        resetForUnauthorized();
+      } else {
+        showToast(error?.message || "标记失败，请稍后重试", true);
+      }
+    } finally {
+      state.manualPending.delete(studentNo);
+    }
   }
 
   function renderMissing() {
