@@ -11,6 +11,7 @@
   const TOKEN_KEY = "gs_cloud_teacher";
   const LEGACY_TOKEN_KEY = "teacherToken";
   const CLASS_INFO_KEY = "teacherClassInfo";
+  const LOCAL_SYSTEM_URL = "http://127.0.0.1:8000";
   const REQUEST_TIMEOUT_MS = 75000;
   const WAKE_MESSAGE =
     "正在连接服务器…（免费实例首次唤醒可能需要 30–60 秒，请勿关闭页面）";
@@ -50,7 +51,7 @@
     "next-action", "stat-submitted", "stat-roster", "stat-missing", "stat-attempts",
     "copy-missing", "missing-callout", "missing-empty", "missing-chips", "students-empty",
     "students-wrap", "students-body", "toggle-students", "review-empty", "review-wrap",
-    "review-body", "export-xlsx", "logout", "toast",
+    "review-body", "export-xlsx", "exit-board", "logout", "toast",
   ]) {
     elements[id] = document.getElementById(id);
   }
@@ -415,6 +416,8 @@
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = Boolean(student.submitted);
+      checkbox.dataset.studentNo = student.student_no;
+      checkbox.dataset.auto = String(student.submitted_by === "auto");
       checkbox.disabled = (
         student.submitted_by === "auto"
         || state.manualPending.has(student.student_no)
@@ -476,7 +479,55 @@
     );
     if (!student) return;
 
-    const previousBoard = JSON.parse(JSON.stringify(state.board));
+    const classCode = state.board.class_code;
+    const previousStudent = {
+      manual_submitted: student.manual_submitted,
+      submitted: student.submitted,
+      submitted_by: student.submitted_by,
+      advice: student.advice,
+    };
+    const previousTotals = {
+      submitted: Boolean(previousStudent.submitted),
+      manual_submitted: Boolean(previousStudent.manual_submitted),
+    };
+
+    const updateTotals = (before, after) => {
+      const totals = state.board.totals || (state.board.totals = {});
+      const submittedDelta = Number(Boolean(after.submitted))
+        - Number(Boolean(before.submitted));
+      const manualDelta = Number(Boolean(after.manual_submitted))
+        - Number(Boolean(before.manual_submitted));
+      totals.submitted = Math.max(
+        0,
+        Number(totals.submitted || 0) + submittedDelta,
+      );
+      totals.missing = Math.max(
+        0,
+        Number(totals.missing || 0) - submittedDelta,
+      );
+      totals.manual_submitted = Math.max(
+        0,
+        Number(totals.manual_submitted || 0) + manualDelta,
+      );
+      const manualSuffix = totals.manual_submitted
+        ? `（其中 ${totals.manual_submitted} 人手工标记）`
+        : "";
+      state.board.headline = (
+        `名单 ${Number(totals.roster || 0)} 人，`
+        + `${totals.submitted} 人已交${manualSuffix}，`
+        + `${totals.missing} 人未交`
+      );
+    };
+
+    const setPendingCheckbox = (pending) => {
+      const checkbox = Array.from(
+        elements["students-body"].querySelectorAll('input[type="checkbox"]'),
+      ).find((item) => item.dataset.studentNo === studentNo);
+      if (!checkbox) return;
+      checkbox.disabled = pending || checkbox.dataset.auto === "true";
+      checkbox.title = pending ? "正在保存" : "";
+    };
+
     state.manualPending.add(studentNo);
     student.manual_submitted = submitted;
     student.submitted = Number(student.attempt_count || 0) > 0 || submitted;
@@ -486,6 +537,7 @@
     if (!Number(student.attempt_count || 0)) {
       student.advice = submitted ? "已手工标记" : "还没交";
     }
+    updateTotals(previousTotals, student);
     renderBoard();
     try {
       const response = await fetchWithTimeout("/api/admin/manual_submit", {
@@ -495,18 +547,28 @@
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          class_code: state.board.class_code,
+          class_code: classCode,
           student_no: studentNo,
           submitted,
         }),
       });
       await parseResponse(response);
       state.manualPending.delete(studentNo);
-      await loadBoard();
+      setPendingCheckbox(false);
       showToast(submitted ? "已标记为已交" : "已取消手工标记");
     } catch (error) {
       state.manualPending.delete(studentNo);
-      state.board = previousBoard;
+      const currentStudent = state.board?.students.find(
+        (item) => item.student_no === studentNo,
+      );
+      if (currentStudent) {
+        const currentTotals = {
+          submitted: Boolean(currentStudent.submitted),
+          manual_submitted: Boolean(currentStudent.manual_submitted),
+        };
+        Object.assign(currentStudent, previousStudent);
+        updateTotals(currentTotals, currentStudent);
+      }
       renderBoard();
       if (error.status === 401) {
         clearSession();
@@ -845,6 +907,16 @@
   elements["logout"].addEventListener("click", () => {
     clearSession();
     showEntry();
+  });
+
+  elements["exit-board"].addEventListener("click", () => {
+    clearSession();
+    try {
+      window.close();
+    } catch (_) {
+      // Browsers may block closing tabs they did not open; navigate below.
+    }
+    window.location.href = LOCAL_SYSTEM_URL;
   });
 
   async function enterFromUrl(credentials) {
