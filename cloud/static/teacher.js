@@ -51,7 +51,7 @@
     "next-action", "stat-submitted", "stat-roster", "stat-missing", "stat-attempts",
     "copy-missing", "missing-callout", "missing-empty", "missing-chips", "students-empty",
     "students-wrap", "students-body", "toggle-students", "review-empty", "review-wrap",
-    "review-body", "export-xlsx", "exit-board", "logout", "toast",
+    "review-body", "export-xlsx", "exit-board", "toast",
   ]) {
     elements[id] = document.getElementById(id);
   }
@@ -902,11 +902,6 @@
 
   elements["export-xlsx"].addEventListener("click", () => {
     runButtonAction(elements["export-xlsx"], exportBoard);
-  });
-
-  elements["logout"].addEventListener("click", () => {
-    clearSession();
-    showEntry();
   });
 
   elements["exit-board"].addEventListener("click", () => {
