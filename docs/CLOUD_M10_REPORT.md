@@ -560,3 +560,73 @@ Q1 的全对记录仍计入 `totals.attempts=6` 和两名学生的 `attempt_coun
 ```text
 [sql-postgres-lint] clean: scanned 6 files
 ```
+
+## M10E 管理口令空白校验与非 JSON 兜底
+
+日期：2026-11-18
+起点：`2359f26`
+范围：`cloud/routes_teacher.py`、`cloud/routes_admin.py`、
+`cloud/static/teacher.js`、`cloud/static/board.js`
+
+### 改法
+
+- `POST /api/teacher/create` 先确认 `admin_secret` 是字符串，再 `strip()`；按去除
+  首尾空白后的长度校验至少 6 位，入库的也是去除首尾空白后的值。
+- `POST /api/teacher/enter` 对输入口令 `strip()`；历史库中带首尾空白的
+  `class_admin_secret` 也先 `strip()` 再比对，兼顾旧数据兼容。
+- `/api/admin/classes` 和 `/api/admin/classes/reset-secret` 的可选管理口令同步做
+  strip 后校验、strip 后存储/重置，避免从运维入口绕过相同约束。
+- `teacher.js`、`board.js` 的 JSON 解析入口先读 `content-type`；不是
+  `application/json` 时不调用 `.json()`。非 JSON 且状态码 `>= 400` 时显示
+  `提交被安全网关临时拦截，请稍后重试（如果反复出现，请把学号里的特殊符号去掉）`；
+  非 JSON 的 2xx 响应按 `{}` 处理。导出接口的错误响应也复用同一判断。
+
+### 10 条自测原始输出
+
+使用任务指定虚拟环境，在 `D:\_scratch\m10e\t.db` 启动 SQLite 服务并监听
+`127.0.0.1:8113`：
+
+```text
+[CASE 1] PASS status=400 body={"detail":"管理口令至少 6 位"}
+[CASE 2] PASS status=400 body={"detail":"管理口令至少 6 位"}
+[CASE 3] PASS status=400 body={"detail":"管理口令至少 6 位"}
+[CASE 4] PASS status=200 body={"ok":true,"class_code":"M10E04","class_name":"n","class_secret":"1V0WBO"}
+[CASE 5] PASS status=200/200 body={"plain":{"ok":true,"token":"2026-11-18T21:17:01|M10E04.c4d8a0dff088484f8e14766192af1f6ce81b758c04beecab60f914e5ea2baec4","expires_at":"2026-11-18T21:17:01","class_code":"M10E04","class_name":"n","teacher_name":"t","class_secret":"1V0WBO"},"spaced":{"ok":true,"token":"2026-11-18T21:17:01|M10E04.c4d8a0dff088484f8e14766192af1f6ce81b758c04beecab60f914e5ea2baec4","expires_at":"2026-11-18T21:17:01","class_code":"M10E04","class_name":"n","teacher_name":"t","class_secret":"1V0WBO"}}
+[CASE 6] PASS status=401 body={"detail":"管理口令不对"}
+[CASE 7 RAW] PASS status=200/200
+create={"ok":true,"class_code":"M10R7B","class_name":"regression","class_secret":"A636RW"}
+enter={"ok":true,"token":"2026-11-18T21:17:37|M10R7B.609ef7337ebee56db0d789f1a0f5ef0f636840c8e6f6b1eddb4f43d8eaac7191","expires_at":"2026-11-18T21:17:37","class_code":"M10R7B","class_name":"regression","teacher_name":"teacher","class_secret":"A636RW"}
+```
+
+用例 1 为 6 个空格，用例 2 为 6 个制表符，用例 3 为
+`"  abcde  "`（strip 后 5 位）；用例 4 建班成功后，用例 5 分别用
+`"abcdef"` 和 `"  abcdef  "` 进入均成功，证明入库值和比对值都已去除首尾空白。
+用例 6 用 6 个空格进入返回 401；用例 7 为正常 6 位口令建班、进班回归。
+
+```text
+[CASE 8] PASS exit=1 chinese_error=True
+RuntimeError: 生产环境缺少 CLOUD_DB_URL，拒绝以 sqlite 启动（会导致每次重新部署数据丢失）。请在 Render 的 Environment 里配置 Neon 连接串。
+[CASE 9] PASS exit=0
+[sql-postgres-lint] clean: scanned 6 files
+[CASE 10] PASS content_type_guard_teacher=True content_type_guard_board=True external_urls=0
+cloud/static/teacher.js:159:  function hasJsonContentType(response) {
+cloud/static/teacher.js:160:    const contentType = response.headers.get("content-type") || "";
+cloud/static/teacher.js:165:    if (!hasJsonContentType(response)) return {};
+cloud/static/teacher.js:174:    const isJson = hasJsonContentType(response);
+cloud/static/teacher.js:497:        const isJson = hasJsonContentType(response);
+cloud/static/board.js:273:  function hasJsonContentType(response) {
+cloud/static/board.js:274:    const contentType = response.headers.get("content-type") || "";
+cloud/static/board.js:279:    if (!hasJsonContentType(response)) return {};
+cloud/static/board.js:288:    const isJson = hasJsonContentType(response);
+cloud/static/board.js:439:        const isJson = hasJsonContentType(response);
+```
+
+### 静态与语法检查
+
+```text
+node --check cloud/static/teacher.js
+node --check cloud/static/board.js
+git diff --check
+```
+
+以上命令均无输出且退出码为 0。

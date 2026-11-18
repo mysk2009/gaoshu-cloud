@@ -83,7 +83,10 @@ async def create_teacher_class(request: Request) -> dict:
             status_code=400,
             detail="班级码必须是 4–12 位大写字母或数字",
         )
-    if not isinstance(admin_secret, str) or len(admin_secret) < 6:
+    if not isinstance(admin_secret, str):
+        raise HTTPException(status_code=400, detail="管理口令至少 6 位")
+    admin_secret = admin_secret.strip()
+    if len(admin_secret) < 6:
         raise HTTPException(status_code=400, detail="管理口令至少 6 位")
     if not isinstance(class_name, str) or not class_name.strip():
         raise HTTPException(status_code=400, detail="班级名不能为空")
@@ -136,6 +139,7 @@ async def enter_teacher_class(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="班级码不能为空")
     if not isinstance(admin_secret, str):
         raise HTTPException(status_code=400, detail="管理口令不能为空")
+    admin_secret = admin_secret.strip()
 
     database = request.app.state.database
     with database.connection() as connection:
@@ -153,10 +157,11 @@ async def enter_teacher_class(request: Request) -> dict:
         raise HTTPException(status_code=404, detail="这个班级码还没人建过")
 
     stored_admin_secret = database.row_value(row, "class_admin_secret")
-    if not stored_admin_secret:
+    if not isinstance(stored_admin_secret, str) or not stored_admin_secret.strip():
         # 运维总口令不能当班级口令用（否则一把钥匙开所有历史班）。
         # 这种班只能由运维口重置出管理口令后才能进。
         raise HTTPException(status_code=401, detail="这个班还没设管理口令，请联系管理员重置")
+    stored_admin_secret = stored_admin_secret.strip()
     authenticated = secrets.compare_digest(admin_secret, stored_admin_secret)
     failure_detail = "管理口令不对"
 

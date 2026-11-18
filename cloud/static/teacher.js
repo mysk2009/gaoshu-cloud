@@ -9,6 +9,8 @@
   const REQUEST_TIMEOUT_MS = 75000;
   const WAKE_MESSAGE =
     "正在连接服务器…（免费实例首次唤醒可能需要 30–60 秒，请勿关闭页面）";
+  const SECURITY_GATEWAY_MESSAGE =
+    "提交被安全网关临时拦截，请稍后重试（如果反复出现，请把学号里的特殊符号去掉）";
 
   const state = {
     token: sessionStorage.getItem("teacherToken") || "",
@@ -154,15 +156,29 @@
     return cell;
   }
 
-  async function parseResponse(response) {
-    let data = {};
+  function hasJsonContentType(response) {
+    const contentType = response.headers.get("content-type") || "";
+    return contentType.toLowerCase().includes("application/json");
+  }
+
+  async function readJsonBody(response) {
+    if (!hasJsonContentType(response)) return {};
     try {
-      data = await response.json();
+      return await response.json();
     } catch (_) {
-      data = {};
+      return {};
     }
+  }
+
+  async function parseResponse(response) {
+    const isJson = hasJsonContentType(response);
+    const data = await readJsonBody(response);
     if (!response.ok) {
-      const error = new Error(data.detail || `请求失败（${response.status}）`);
+      const message =
+        !isJson && response.status >= 400
+          ? SECURITY_GATEWAY_MESSAGE
+          : data.detail || `请求失败（${response.status}）`;
+      const error = new Error(message);
       error.status = response.status;
       throw error;
     }
@@ -478,12 +494,17 @@
         headers: { Authorization: `Bearer ${state.token}` },
       });
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
+        const isJson = hasJsonContentType(response);
+        const data = await readJsonBody(response);
         if (response.status === 401) {
           clearSession();
           showEntry();
         }
-        throw new Error(data.detail || `导出失败（${response.status}）`);
+        throw new Error(
+          !isJson && response.status >= 400
+            ? SECURITY_GATEWAY_MESSAGE
+            : data.detail || `导出失败（${response.status}）`,
+        );
       }
       const blob = await response.blob();
       const disposition = response.headers.get("Content-Disposition") || "";

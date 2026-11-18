@@ -180,11 +180,13 @@ async def create_class(request: Request) -> dict:
     class_code = normalize_class_code(payload.get("class_code"))
     if not class_code or not isinstance(class_secret, str) or not class_secret:
         raise HTTPException(status_code=400, detail="班级码和班级口令不能为空")
-    if class_admin_secret is not None and (
-        not isinstance(class_admin_secret, str) or len(class_admin_secret) < 6
-    ):
-        raise HTTPException(status_code=400, detail="管理口令至少 6 位")
-    if class_admin_secret is None:
+    if class_admin_secret is not None:
+        if not isinstance(class_admin_secret, str):
+            raise HTTPException(status_code=400, detail="管理口令至少 6 位")
+        class_admin_secret = class_admin_secret.strip()
+        if len(class_admin_secret) < 6:
+            raise HTTPException(status_code=400, detail="管理口令至少 6 位")
+    else:
         # 运维建班也必须有管理口令：enter 不再回落到运维总口令，
         # 没有管理口令的班谁都进不去，所以这里自动生成并返回给建班的人。
         class_admin_secret = "".join(
@@ -241,11 +243,13 @@ async def reset_class_admin_secret(request: Request) -> dict:
     payload = await _json_object(request)
     class_code = normalize_class_code(payload.get("class_code"))
     admin_secret = payload.get("admin_secret")
-    if admin_secret is not None and (
-        not isinstance(admin_secret, str) or len(admin_secret) < 6
-    ):
-        raise HTTPException(status_code=400, detail="管理口令至少 6 位")
-    if admin_secret is None:
+    if admin_secret is not None:
+        if not isinstance(admin_secret, str):
+            raise HTTPException(status_code=400, detail="管理口令至少 6 位")
+        admin_secret = admin_secret.strip()
+        if len(admin_secret) < 6:
+            raise HTTPException(status_code=400, detail="管理口令至少 6 位")
+    else:
         admin_secret = "".join(
             secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8)
         )
