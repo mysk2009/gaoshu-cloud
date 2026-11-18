@@ -185,6 +185,41 @@ async def enter_teacher_class(request: Request) -> dict:
     }
 
 
+@router.post("/api/teacher/probe_class")
+async def probe_teacher_class(request: Request) -> dict:
+    payload = await _json_object(request)
+    class_code = normalize_class_code(payload.get("class_code"))
+    if not CLASS_CODE_PATTERN.fullmatch(class_code):
+        raise HTTPException(status_code=400, detail="班级码不合法")
+
+    database = request.app.state.database
+    with database.connection() as connection:
+        row = database.fetchone(
+            connection,
+            "SELECT class_name FROM classes_cloud WHERE class_code = ?",
+            (class_code,),
+        )
+        if row is None:
+            return {
+                "ok": True,
+                "exists": False,
+                "class_name": None,
+                "roster": 0,
+            }
+        roster = database.fetchone(
+            connection,
+            "SELECT COUNT(*) AS total FROM roster_cloud WHERE class_code = ?",
+            (class_code,),
+        )
+
+    return {
+        "ok": True,
+        "exists": True,
+        "class_name": database.row_value(row, "class_name"),
+        "roster": int(database.row_value(roster, "total") or 0),
+    }
+
+
 @router.post("/api/teacher/reset_secret")
 async def reset_teacher_secret(request: Request) -> dict:
     payload = await _json_object(request)
@@ -266,7 +301,7 @@ async def delete_teacher_class(request: Request) -> dict:
                 )
             raise HTTPException(
                 status_code=401,
-                detail="口令不对，删班需要班级口令",
+                detail="口令不对，删除班级需要班级口令",
             )
 
         deleted: dict[str, int] = {}

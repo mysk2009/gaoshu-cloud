@@ -122,6 +122,7 @@
       state.classInfo = null;
       state.board = null;
       state.showAllStudents = false;
+      state.manualPending.clear();
       sessionStorage.removeItem("teacherToken");
       sessionStorage.removeItem("teacherClassInfo");
       elements.classCode.value = "";
@@ -159,6 +160,9 @@
       student.manual_submitted = manual;
       student.submitted = answered || manual;
       student.submitted_by = answered ? "auto" : (manual ? "manual" : null);
+      if (!answered) {
+        student.advice = manual ? "已手工标记" : "还没交";
+      }
       if (student.submitted) submittedCount += 1;
       if (manual) manualCount += 1;
       if (!student.submitted) {
@@ -240,13 +244,18 @@
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = Boolean(student.submitted);
-      checkbox.disabled = student.submitted_by === "auto";
+      checkbox.disabled = (
+        student.submitted_by === "auto"
+        || state.manualPending.has(student.student_no)
+      );
       checkbox.setAttribute(
         "aria-label",
         `${student.real_name || student.student_no}已交`,
       );
-      if (checkbox.disabled) {
+      if (student.submitted_by === "auto") {
         checkbox.title = "已有作答记录，不能在这里取消";
+      } else if (state.manualPending.has(student.student_no)) {
+        checkbox.title = "正在保存";
       }
       checkbox.addEventListener("change", () => {
         setManualSubmission(student.student_no, checkbox.checked);
@@ -309,6 +318,7 @@
         }),
       });
       const data = await parseResponse(response);
+      state.manualPending.delete(studentNo);
       const current = state.board.students.find(
         (item) => item.student_no === studentNo,
       );
@@ -317,6 +327,7 @@
       renderDashboard();
       showToast(submitted ? "已标记为已交" : "已取消手工标记");
     } catch (error) {
+      state.manualPending.delete(studentNo);
       state.board = previousBoard;
       renderDashboard();
       if (error.status === 401) {
@@ -324,8 +335,6 @@
       } else {
         showToast(error?.message || "标记失败，请稍后重试", true);
       }
-    } finally {
-      state.manualPending.delete(studentNo);
     }
   }
 
