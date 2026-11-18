@@ -102,20 +102,20 @@ def _build_headline(roster_count: int, submitted: int, missing: list[dict[str, A
     return f"{headline}，{callout}还没交"
 
 
-def _build_next_action(weak_top: list[dict[str, Any]], missing_count: int) -> str:
-    if weak_top:
-        action = f"建议这节课先讲下面 {min(3, len(weak_top))} 道题"
+def _build_next_action(review_count: int, missing_count: int) -> str:
+    if review_count:
+        action = f"建议这节课先讲下面 {review_count} 道题"
         if missing_count:
             action += f"，再让没交的 {missing_count} 人补上练习"
         return action
-    if missing_count:
-        return f"这节课没有明显的共性错题，先让没交的 {missing_count} 人补上练习"
-    return "这个班目前没有明显共性错题，可以按进度往下讲"
+    return "这节课没有需要集中讲的题，按逐人建议单独跟进"
 
 
 def _build_question_reason(question: dict[str, Any]) -> str:
     wrong_devices = int(question["wrong_devices"])
     devices = int(question["devices"])
+    if wrong_devices == 0:
+        return "全班都做对了，这节课不用讲"
     if devices > 0 and wrong_devices == devices:
         prefix = f"{wrong_devices} 人全做错"
     else:
@@ -417,7 +417,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
             "avg_use_sec": item["avg_use_sec"],
             "reason": _build_question_reason(item),
         }
-        for rank, item in enumerate(questions[:8], start=1)
+        for rank, item in enumerate(weak_questions[:8], start=1)
     ]
     missing = [
         {
@@ -460,7 +460,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         "weak_top": weak_top,
         "review_list": review_list,
         "headline": _build_headline(roster_count, submitted_count, missing),
-        "next_action": _build_next_action(weak_top, missing_count),
+        "next_action": _build_next_action(len(review_list), missing_count),
         "missing_callout": _missing_callout(missing),
     }
 

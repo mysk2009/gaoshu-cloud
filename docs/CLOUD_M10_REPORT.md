@@ -380,3 +380,183 @@ cloud/routes_board.py:178: ungrouped SELECT reference r.class_code; GROUP BY at 
 
 本机无 postgres，postgres 行为由 F2 静态审计 + F4-必做2 的 lint 覆盖；线上由
 Hermes 部署后实测。本次没有把 SQLite 回归当作 PostgreSQL 运行证据。
+
+## M10C 看板人话层渲染
+
+日期：2026-11-18
+起点：`73a0e08`
+范围：`cloud/static/board.html`、`cloud/static/board.js`
+
+### 改法
+
+- 在页面标题与统计卡片之间新增结论条：第一行显示 `headline`，第二行显示
+  `next_action`；名单为空时显示“还没导名单，先把名单导进来”。
+- 在“未交名单”标题下显示 `missing_callout`；无人缺交时显示“全员已交”。
+- “逐人明细”在“正确率”右侧新增“建议”列，读取 `students[].advice`。
+- “讲评清单”在“错因分布”右侧新增“为什么讲它”列，读取
+  `review_list[].reason`。
+- 字段缺失时使用 `—` 或安全兜底文案，不显示 `undefined`；未改
+  `/api/board` 的数值或统计口径。
+- 保留加载状态、唤醒提示、骨架屏、刷新、退出、复制名单和导出 Excel；
+  两张表在手机端通过 `overflow-x: auto` 横向滚动，并设置最小宽度。
+
+### 真实接口数据
+
+使用任务指定的 Python，以
+`sqlite:///D:/_scratch/m10c/t.db` 启动 `cloud.main:app`，真实经过建班、导入
+S1..S5、3 名学生各上报 3 条作答（Q2 全错、Q3 部分错）后读取 `/api/board`。
+原始关键输出：
+
+```json
+{
+  "totals": {
+    "roster": 5,
+    "submitted": 3,
+    "missing": 2,
+    "attempts": 9,
+    "devices": 3
+  },
+  "students": [
+    {"student_no": "S1", "advice": "计算要留意"},
+    {"student_no": "S2", "advice": "建议补基础"},
+    {"student_no": "S3", "advice": "建议补基础"},
+    {"student_no": "S4", "advice": "还没交"},
+    {"student_no": "S5", "advice": "还没交"}
+  ],
+  "review_list": [
+    {"rank": 1, "qid": "Q2", "reason": "全都错在计算"},
+    {"rank": 2, "qid": "Q3", "reason": "多错在概念"},
+    {"rank": 3, "qid": "Q1", "reason": "多错在看错"}
+  ],
+  "headline": "名单 5 人，3 人已交，赵六、钱七还没交",
+  "next_action": "建议这节课先讲下面 3 道题，再让没交的 2 人补上练习",
+  "missing_callout": "赵六、钱七"
+}
+```
+
+### 无头浏览器原始输出
+
+使用本机 Playwright Chromium 登录真实页面，等待数据替换骨架屏后读取渲染 DOM：
+
+```json
+{
+  "initial": {
+    "loading": true,
+    "skeletonVisible": true,
+    "connectingText": true
+  },
+  "desktop": {
+    "headline": "名单 5 人，3 人已交，赵六、钱七还没交",
+    "nextAction": "建议这节课先讲下面 3 道题，再让没交的 2 人补上练习",
+    "missingCallout": "赵六、钱七",
+    "studentHeaders": ["学号", "姓名", "已交", "作答", "正确率", "建议"],
+    "adviceValues": ["计算要留意", "建议补基础", "建议补基础", "还没交", "还没交"],
+    "reviewHeaders": ["排名", "题号", "错人数", "做题人数", "错误率", "平均用时", "错因分布", "为什么讲它"],
+    "reasonValues": ["全都错在计算", "多错在概念", "多错在看错"],
+    "jsErrorCount": 0,
+    "externalResourceCount": 0,
+    "skeletonVisibleAfterData": false
+  },
+  "mobile": {
+    "bodyScrollWidth": 390,
+    "viewportWidth": 390,
+    "studentsWrapOverflowX": "auto",
+    "studentsHorizontalScroll": true,
+    "reviewWrapOverflowX": "auto",
+    "reviewHorizontalScroll": true
+  },
+  "pageErrors": [],
+  "consoleErrors": []
+}
+```
+
+空名单及字段缺失边界也用无头浏览器验证，原始输出：
+
+```json
+{
+  "emptyRoster": {
+    "headline": "还没导名单，先把名单导进来",
+    "nextAction": "",
+    "nextActionHidden": true,
+    "missingCallout": "还没导名单"
+  },
+  "missingFields": {
+    "headline": "看板数据已更新",
+    "nextAction": "",
+    "nextActionHidden": true,
+    "missingCallout": "全员已交",
+    "advice": "—",
+    "reason": "—",
+    "bodyHasUndefined": false
+  }
+}
+```
+
+### 回归与静态检查
+
+- `node --check cloud/static/board.js`：退出码 0。
+- `git diff --check`：通过。
+- `python cloud/m10_acceptance.py`：最终输出
+  `[PASS] M10 F2 acceptance passed`，既有作答归属、解绑、导出与统计回归通过。
+- 页面仍保留 `viewport`、`正在连接服务器`、`讲评`、`未交`、`正确率`；
+  静态扫描未发现外部 URL 或 CDN 引用。
+
+## M10D 讲评清单门槛与文案
+
+日期：2026-11-18
+起点：`494be38`
+范围：`cloud/routes_board.py`
+
+### 改法
+
+- `review_list` 改为只从 `wrong_devices > 0` 的题目中取前 8 条。全对题不再进入
+  建议讲评，但仍保留在题目统计中；`totals.attempts`、逐人 `attempt_count` 和
+  `correct_rate` 的口径未改。
+- 题目排序继续使用既有的 `wrong_devices` 降序、错误率降序、`qid` 升序规则。
+- `_build_question_reason()` 遇到 `wrong_devices = 0` 时直接返回
+  `全班都做对了，这节课不用讲`，不再生成“部分做错（错误率 0%）”。
+- `_build_next_action()` 改为接收 `len(review_list)`，讲评数量与清单实际条数一致；
+  清单为空时统一返回
+  `这节课没有需要集中讲的题，按逐人建议单独跟进`。
+- 逐人 `advice`、`headline`、`missing_callout` 逻辑未改，SQL 查询也未改。
+
+### 端到端验收原始输出
+
+使用任务指定的虚拟环境 Python，在端口 `8112` 启动临时 sqlite 本地服务，导入
+S1/S2 两名学生并写入 6 条作答：Q1 两人全对，Q2 两人全错，Q3 一人错。
+
+```text
+{"totals": {"roster": 2, "submitted": 2, "missing": 0, "attempts": 6, "devices": 2}, "students": [{"student_no": "S1", "attempt_count": 3, "correct_rate": 0.3333}, {"student_no": "S2", "attempt_count": 3, "correct_rate": 0.6667}], "review_list": [{"qid": "Q2", "wrong_devices": 2, "reason": "全都错在计算"}, {"qid": "Q3", "wrong_devices": 1, "reason": "多错在概念"}], "next_action": "建议这节课先讲下面 2 道题", "next_action_number": 2, "zero_wrong_fallback": "全班都做对了，这节课不用讲", "empty_review_next_action": "这节课没有需要集中讲的题，按逐人建议单独跟进"}
+[check] qids: OK; actual=['Q2', 'Q3']
+[check] wrong_counts: OK; actual=[2, 1]
+[check] no_zero_rate_reason: OK; actual=['全都错在计算', '多错在概念']
+[check] next_action_wiring: OK; actual='建议这节课先讲下面 2 道题'
+[check] next_action_count: OK; actual='建议这节课先讲下面 2 道题'
+[check] totals: OK; actual={'roster': 2, 'submitted': 2, 'missing': 0, 'attempts': 6, 'devices': 2}
+[check] student_rates: OK; actual=[{'student_no': 'S1', 'attempt_count': 3, 'correct_rate': 0.3333}, {'student_no': 'S2', 'attempt_count': 3, 'correct_rate': 0.6667}]
+[check] zero_wrong_fallback: OK; actual='全班都做对了，这节课不用讲'
+[check] empty_review_next_action: OK; actual='这节课没有需要集中讲的题，按逐人建议单独跟进'
+[PASS] M10D review-list gate and copy acceptance passed
+```
+
+Q1 的全对记录仍计入 `totals.attempts=6` 和两名学生的 `attempt_count=3`，证明只
+收窄了讲评入口，没有改变统计口径。
+
+### 既有回归与 SQL lint
+
+`cloud/m10_acceptance.py` 原始输出中的关键结果：
+
+```text
+[step-2] {"sync": {"accepted": 3, "duplicated": 0, "skipped": 0, "total_received": 3, "server_time": "2026-11-18T08:18:16"}, "student": {"student_no": "S1", "real_name": "学生一", "submitted": true, "attempt_count": 3, "correct_count": 1, "correct_rate": 0.3333}, "totals": {"roster": 2, "submitted": 1, "missing": 1, "attempts": 3, "devices": 1}, "export_bytes": 4617, "review_qids": ["Q2", "Q3"]}
+[step-4] {"student": {"student_no": "S1", "real_name": "学生一", "submitted": true, "attempt_count": 3, "correct_count": 1, "correct_rate": 0.3333}, "totals": {"roster": 2, "submitted": 1, "missing": 1, "attempts": 3, "devices": 1}, "unbound_devices": [{"device_uuid": "D1", "nickname": null, "attempts": 3, "last_at": "2026-11-18T08:18:16"}]}
+[step-5] {"sync": {"accepted": 1, "duplicated": 0, "skipped": 0, "total_received": 4, "server_time": "2026-11-18T08:18:16"}, "student": {"student_no": "S1", "real_name": "学生一", "submitted": true, "attempt_count": 4, "correct_count": 2, "correct_rate": 0.5}, "totals": {"roster": 2, "submitted": 1, "missing": 1, "attempts": 4, "devices": 2}}
+[step-6] {"duplicate_and_dirty": {"accepted": 0, "duplicated": 1, "skipped": 1, "total_received": 4, "server_time": "2026-11-18T08:18:16"}, "stored_rows": [["D1", "S1", 3], ["D2", "S1", 1]]}
+[PASS] M10 F2 acceptance passed
+```
+
+修复前同一脚本的 `review_qids` 为 `["Q2", "Q3", "Q1"]`，其中 Q1 为 S1 单独
+做对的题；修复后为 `["Q2", "Q3"]`。
+
+```text
+[sql-postgres-lint] clean: scanned 6 files
+```
