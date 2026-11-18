@@ -80,6 +80,14 @@ WHERE (student_no IS NULL OR student_no = '')
   )
 """
 
+UNIFY_CLASS_SECRET_SQL = """
+UPDATE classes_cloud
+SET class_secret = class_admin_secret
+WHERE class_admin_secret IS NOT NULL
+  AND TRIM(class_admin_secret) <> ''
+  AND (class_secret IS NULL OR class_secret <> class_admin_secret)
+"""
+
 
 def ensure_schema(database: Database) -> None:
     with database.transaction() as connection:
@@ -110,6 +118,23 @@ def ensure_schema(database: Database) -> None:
             connection.execute(
                 "ALTER TABLE classes_cloud ADD COLUMN class_admin_secret TEXT"
             )
+
+        unify_cursor = database.execute(connection, UNIFY_CLASS_SECRET_SQL)
+        raw_unified_rowcount = getattr(unify_cursor, "rowcount", None)
+        unified = (
+            raw_unified_rowcount
+            if isinstance(raw_unified_rowcount, int) and raw_unified_rowcount >= 0
+            else 0
+        )
+        suffix = (
+            ""
+            if isinstance(raw_unified_rowcount, int) and raw_unified_rowcount >= 0
+            else " (rowcount unavailable)"
+        )
+        print(
+            f"[cloud] unified class secrets migrated={unified}{suffix}",
+            flush=True,
+        )
 
         if database.backend == "sqlite":
             attempt_columns = [

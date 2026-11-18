@@ -19,7 +19,7 @@ router = APIRouter()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CLASS_CODE_PATTERN = re.compile(r"^[A-Z0-9]{4,12}$")
-ADMIN_FAILURE_LIMIT = 6
+ADMIN_FAILURE_LIMIT = 10
 ADMIN_FAILURE_WINDOW_SECONDS = 10 * 60
 
 # 当前部署按单实例运行；若扩展到多实例，应把此计数迁移到共享缓存。
@@ -37,9 +37,21 @@ async def _json_object(request: Request) -> dict[str, Any]:
     return payload
 
 
-def _new_class_secret() -> str:
-    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-    return "".join(secrets.choice(alphabet) for _ in range(6))
+def _normalized_secret(value: Any) -> str:
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail="口令至少 4 位")
+    secret = value.strip()
+    if len(secret) < 4:
+        raise HTTPException(status_code=400, detail="口令至少 4 位")
+    if len(secret) > 32:
+        raise HTTPException(status_code=400, detail="口令最多 32 位")
+    return secret
+
+
+def _request_secret(payload: dict[str, Any], fallback: str = "admin_secret") -> Any:
+    if "secret" in payload:
+        return payload.get("secret")
+    return payload.get(fallback)
 
 
 def _client_ip(request: Request) -> str:
@@ -74,7 +86,7 @@ def teacher_page() -> FileResponse:
 async def create_teacher_class(request: Request) -> dict:
     payload = await _json_object(request)
     class_code = normalize_class_code(payload.get("class_code"))
-    admin_secret = payload.get("admin_secret")
+    secret = _normalized_secret(_request_secret(payload))
     class_name = payload.get("class_name")
     teacher_name = payload.get("teacher_name")
 
@@ -83,17 +95,11 @@ async def create_teacher_class(request: Request) -> dict:
             status_code=400,
             detail="班级码必须是 4–12 位大写字母或数字",
         )
-    if not isinstance(admin_secret, str):
-        raise HTTPException(status_code=400, detail="管理口令至少 6 位")
-    admin_secret = admin_secret.strip()
-    if len(admin_secret) < 6:
-        raise HTTPException(status_code=400, detail="管理口令至少 6 位")
     if not isinstance(class_name, str) or not class_name.strip():
         raise HTTPException(status_code=400, detail="班级名不能为空")
     if not isinstance(teacher_name, str) or not teacher_name.strip():
         raise HTTPException(status_code=400, detail="你的名字不能为空")
 
-    class_secret = _new_class_secret()
     created_at = datetime.now().isoformat(timespec="seconds")
     database = request.app.state.database
     with database.transaction() as connection:
@@ -110,22 +116,21 @@ async def create_teacher_class(request: Request) -> dict:
                 class_code,
                 class_name.strip(),
                 teacher_name.strip(),
-                admin_secret,
-                class_secret,
+                secret,
+                secret,
                 created_at,
             ),
         )
         if cursor.rowcount == 0:
             raise HTTPException(
                 status_code=409,
-                detail="这个班级码已被占用，换一个",
+                detail="这个班级码已经有人用了：要么换一个班级码，要么用原来的口令进这个班",
             )
 
     return {
         "ok": True,
         "class_code": class_code,
         "class_name": class_name.strip(),
-        "class_secret": class_secret,
     }
 
 
@@ -133,20 +138,17 @@ async def create_teacher_class(request: Request) -> dict:
 async def enter_teacher_class(request: Request) -> dict:
     payload = await _json_object(request)
     class_code = normalize_class_code(payload.get("class_code"))
-    admin_secret = payload.get("admin_secret")
+    secret = _normalized_secret(_request_secret(payload))
 
     if not class_code:
         raise HTTPException(status_code=400, detail="班级码不能为空")
-    if not isinstance(admin_secret, str):
-        raise HTTPException(status_code=400, detail="管理口令不能为空")
-    admin_secret = admin_secret.strip()
 
     database = request.app.state.database
     with database.connection() as connection:
         row = database.fetchone(
             connection,
             """
-            SELECT class_name, teacher_name, class_secret, class_admin_secret
+            SELECT class_name, teacher_name, class_secret
             FROM classes_cloud
             WHERE class_code = ?
             """,
@@ -156,14 +158,10 @@ async def enter_teacher_class(request: Request) -> dict:
     if row is None:
         raise HTTPException(status_code=404, detail="这个班级码还没人建过")
 
-    stored_admin_secret = database.row_value(row, "class_admin_secret")
-    if not isinstance(stored_admin_secret, str) or not stored_admin_secret.strip():
-        # 运维总口令不能当班级口令用（否则一把钥匙开所有历史班）。
-        # 这种班只能由运维口重置出管理口令后才能进。
-        raise HTTPException(status_code=401, detail="这个班还没设管理口令，请联系管理员重置")
-    stored_admin_secret = stored_admin_secret.strip()
-    authenticated = secrets.compare_digest(admin_secret, stored_admin_secret)
-    failure_detail = "管理口令不对"
+    stored_secret = database.row_value(row, "class_secret")
+    authenticated = isinstance(stored_secret, str) and secrets.compare_digest(
+        secret, stored_secret
+    )
 
     if not authenticated:
         limited = _record_admin_failure(_client_ip(request))
@@ -172,7 +170,7 @@ async def enter_teacher_class(request: Request) -> dict:
                 status_code=429,
                 detail="尝试次数过多，请 10 分钟后再试",
             )
-        raise HTTPException(status_code=401, detail=failure_detail)
+        raise HTTPException(status_code=401, detail="口令不对")
 
     _clear_admin_failures(_client_ip(request))
 
@@ -184,5 +182,106 @@ async def enter_teacher_class(request: Request) -> dict:
         "class_code": class_code,
         "class_name": database.row_value(row, "class_name"),
         "teacher_name": database.row_value(row, "teacher_name"),
-        "class_secret": database.row_value(row, "class_secret"),
     }
+
+
+@router.post("/api/teacher/reset_secret")
+async def reset_teacher_secret(request: Request) -> dict:
+    payload = await _json_object(request)
+    class_code = normalize_class_code(payload.get("class_code"))
+    old_secret = payload.get("old_secret")
+    if old_secret is None:
+        old_secret = payload.get("secret")
+    new_secret = _normalized_secret(payload.get("new_secret"))
+
+    if not class_code:
+        raise HTTPException(status_code=400, detail="班级码不能为空")
+
+    database = request.app.state.database
+    with database.transaction() as connection:
+        row = database.fetchone(
+            connection,
+            "SELECT class_secret FROM classes_cloud WHERE class_code = ?",
+            (class_code,),
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="这个班级码还没人建过")
+
+        stored_secret = database.row_value(row, "class_secret")
+        normalized_old = old_secret.strip() if isinstance(old_secret, str) else ""
+        if not isinstance(stored_secret, str) or not secrets.compare_digest(
+            normalized_old, stored_secret
+        ):
+            limited = _record_admin_failure(_client_ip(request))
+            if limited:
+                raise HTTPException(
+                    status_code=429,
+                    detail="尝试次数过多，请 10 分钟后再试",
+                )
+            raise HTTPException(status_code=401, detail="原口令不对")
+
+        database.execute(
+            connection,
+            """
+            UPDATE classes_cloud
+            SET class_secret = ?, class_admin_secret = ?
+            WHERE class_code = ?
+            """,
+            (new_secret, new_secret, class_code),
+        )
+
+    _clear_admin_failures(_client_ip(request))
+    return {"ok": True, "class_code": class_code}
+
+
+@router.post("/api/teacher/delete_class")
+async def delete_teacher_class(request: Request) -> dict:
+    payload = await _json_object(request)
+    class_code = normalize_class_code(payload.get("class_code"))
+    secret = _request_secret(payload, fallback="secret")
+
+    if not class_code:
+        raise HTTPException(status_code=400, detail="班级码不能为空")
+
+    database = request.app.state.database
+    with database.transaction() as connection:
+        row = database.fetchone(
+            connection,
+            "SELECT class_secret FROM classes_cloud WHERE class_code = ?",
+            (class_code,),
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="这个班级码还没人建过")
+
+        stored_secret = database.row_value(row, "class_secret")
+        normalized_secret = secret.strip() if isinstance(secret, str) else ""
+        if not isinstance(stored_secret, str) or not secrets.compare_digest(
+            normalized_secret, stored_secret
+        ):
+            limited = _record_admin_failure(_client_ip(request))
+            if limited:
+                raise HTTPException(
+                    status_code=429,
+                    detail="尝试次数过多，请 10 分钟后再试",
+                )
+            raise HTTPException(
+                status_code=401,
+                detail="口令不对，删班需要班级口令",
+            )
+
+        deleted: dict[str, int] = {}
+        for name, table in (
+            ("attempts", "attempts_cloud"),
+            ("devices", "devices"),
+            ("roster", "roster_cloud"),
+            ("class_rows", "classes_cloud"),
+        ):
+            cursor = database.execute(
+                connection,
+                f"DELETE FROM {table} WHERE class_code = ?",
+                (class_code,),
+            )
+            deleted[name] = max(int(getattr(cursor, "rowcount", 0) or 0), 0)
+
+    _clear_admin_failures(_client_ip(request))
+    return {"ok": True, "deleted": deleted}

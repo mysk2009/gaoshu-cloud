@@ -299,14 +299,14 @@
     return data;
   }
 
-  function resetForUnauthorized(message = "登录已失效，请重新输入班级码和管理口令") {
+  function resetForUnauthorized(message = "登录已失效，请重新输入班级码和口令") {
     setLoggedIn(false);
     setNotice(message);
   }
 
   async function loadBoard() {
     if (!state.token || !state.classInfo?.class_code) {
-      resetForUnauthorized("请先输入班级码和管理口令");
+      resetForUnauthorized("请先输入班级码和口令");
       return;
     }
     clearRetry();
@@ -344,12 +344,13 @@
     elements.loginSubmit.disabled = true;
     elements.loginSubmit.textContent = "正在连接…";
     try {
+      const enteredSecret = elements.password.value;
       const response = await fetchWithTimeout("/api/teacher/enter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           class_code: classCode,
-          admin_secret: elements.password.value,
+          secret: enteredSecret,
         }),
       });
       const data = await parseResponse(response);
@@ -358,7 +359,7 @@
         class_code: data.class_code,
         class_name: data.class_name,
         teacher_name: data.teacher_name || "",
-        class_secret: data.class_secret || "",
+        class_secret: enteredSecret,
       };
       sessionStorage.setItem("teacherToken", data.token);
       sessionStorage.setItem(
@@ -390,7 +391,7 @@
   });
 
   elements.logout.addEventListener("click", () => {
-    resetForUnauthorized("已退出，请重新输入班级码和管理口令");
+    resetForUnauthorized("已退出，请重新输入班级码和口令");
   });
 
   elements.boardRetry.addEventListener("click", () => {
@@ -474,7 +475,7 @@
     loadBoard();
   } else {
     setLoggedIn(false);
-    setNotice("输入班级码和管理口令");
+    setNotice("输入班级码和口令");
   }
   renderDashboard();
 })();

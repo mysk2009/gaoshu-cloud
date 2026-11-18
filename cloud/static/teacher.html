@@ -355,7 +355,7 @@
     <header class="page-head">
       <div>
         <h1>老师入口</h1>
-        <p class="subtitle">不用注册，拿班级码和管理口令直接进班</p>
+        <p class="subtitle">不用注册，拿班级码和口令直接进班</p>
       </div>
     </header>
 
@@ -376,8 +376,8 @@
           <label>班级码
             <input id="entry-code" type="text" autocomplete="off" placeholder="例如 F34F05" required>
           </label>
-          <label>管理口令
-            <input id="entry-secret" type="password" autocomplete="current-password" placeholder="老师的管理口令" required>
+          <label>口令
+            <input id="entry-secret" type="password" autocomplete="current-password" placeholder="老师给的口令" required>
           </label>
         </div>
         <div class="actions">
@@ -402,8 +402,8 @@
           <label>你的名字
             <input id="create-teacher-name" type="text" autocomplete="name" placeholder="例如 王老师" required>
           </label>
-          <label>设一个管理口令（≥6位）
-            <input id="create-secret" type="password" autocomplete="new-password" minlength="6" placeholder="至少 6 位" required>
+          <label>设一个口令（4–32 位）
+            <input id="create-secret" type="password" autocomplete="new-password" minlength="4" maxlength="32" placeholder="4–32 位" required>
           </label>
         </div>
         <div class="actions">
@@ -425,7 +425,7 @@
           <button class="card-copy secondary" type="button" data-copy-target="card-code">复制</button>
         </div>
         <div class="card-line">
-          <span class="card-label">班级口令</span>
+          <span class="card-label">口令</span>
           <span id="card-secret" class="card-value"></span>
           <button class="card-copy secondary" type="button" data-copy-target="card-secret">复制</button>
         </div>
@@ -458,7 +458,7 @@
             <div id="board-class-meta" class="muted"></div>
           </div>
           <div class="class-actions">
-            <button id="copy-class-secret" class="secondary" type="button">复制学生班级口令</button>
+            <button id="copy-class-secret" class="secondary" type="button">复制口令</button>
             <button id="refresh-board" type="button">刷新看板</button>
             <button id="logout" class="secondary" type="button">退出</button>
           </div>

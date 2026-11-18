@@ -21,7 +21,7 @@
   const LOGIN_FAILED_STATUS_MESSAGE = "服务器已连接（登录没成功）";
   const OPERATION_FAILED_STATUS_MESSAGE = "服务器已连接（操作没成功）";
   const AUTO_LOGIN_FAILED_MESSAGE =
-    "自动登录失败，请确认班级码和管理口令";
+    "自动登录失败，请确认班级码和口令";
   const AUTO_LOGIN_LOADING_MESSAGE = "正在自动登录…";
   const SECURITY_GATEWAY_MESSAGE =
     "提交被安全网关临时拦截，请稍后重试（如果反复出现，请把学号里的特殊符号去掉）";
@@ -221,13 +221,13 @@
     sessionStorage.removeItem(CLASS_INFO_KEY);
   }
 
-  function saveSession(data) {
+  function saveSession(data, secret) {
     state.token = data.token;
     state.classInfo = {
       class_code: data.class_code,
       class_name: data.class_name,
       teacher_name: data.teacher_name || "",
-      class_secret: data.class_secret || "",
+      class_secret: secret || "",
     };
     sessionStorage.setItem(TOKEN_KEY, state.token);
     // Keep the legacy key readable by the retained board page during rollout.
@@ -448,7 +448,7 @@
     const classSecret = state.classInfo?.class_secret || "";
     elements["board-class-meta"].textContent = [
       teacherName ? `任课老师 ${teacherName}` : "",
-      classSecret ? `学生口令 ${classSecret}` : "",
+      classSecret ? `口令 ${classSecret}` : "",
     ].filter(Boolean).join(" · ");
     elements["headline"].textContent = board.headline;
     elements["next-action"].textContent = board.next_action;
@@ -469,7 +469,7 @@
   async function loadBoard() {
     if (!state.token || !state.classInfo?.class_code) {
       showEntry();
-      setNotice("请先输入班级码和管理口令");
+      setNotice("请先输入班级码和口令");
       return;
     }
     setNotice("正在加载看板…");
@@ -490,7 +490,7 @@
       if (error.status === 401) {
         clearSession();
         showEntry();
-        setNotice("登录已失效，请重新输入班级码和管理口令");
+        setNotice("登录已失效，请重新输入班级码和口令");
         showConnected(connectionId, LOGIN_FAILED_STATUS_MESSAGE, false);
         return;
       }
@@ -520,7 +520,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           class_code: classCode,
-          admin_secret: adminSecret,
+          secret: adminSecret,
         }),
       });
       return await parseResponse(response);
@@ -590,7 +590,7 @@
     const whole = [
       `云端看板：${url}/teacher`,
       `班级码：${info.class_code}`,
-      `学生口令：${info.class_secret}`,
+      `口令：${info.class_secret}`,
     ].join("\n");
     elements["card-url"].textContent = url;
     elements["card-code"].textContent = info.class_code;
@@ -615,7 +615,8 @@
       return;
     }
     const data = await enterClass(classCode, elements["entry-secret"].value);
-    saveSession(data);
+    const enteredSecret = elements["entry-secret"].value;
+    saveSession(data, enteredSecret);
     elements["entry-secret"].value = "";
     elements["entry-section"].classList.add("hidden");
     elements["create-section"].classList.add("hidden");
@@ -635,8 +636,8 @@
       setNotice("班级码不能为空");
       return;
     }
-    if (adminSecret.length < 6) {
-      setNotice("管理口令至少 6 位");
+    if (adminSecret.length < 4 || adminSecret.length > 32) {
+      setNotice("口令要 4–32 位");
       return;
     }
     if (!state.pendingCreate) {
@@ -647,7 +648,7 @@
           class_code: classCode,
           class_name: elements["create-class-name"].value,
           teacher_name: elements["create-teacher-name"].value,
-          admin_secret: adminSecret,
+          secret: adminSecret,
         }),
       });
       const created = await parseResponse(response);
@@ -656,14 +657,14 @@
         adminSecret,
         created,
       };
-      showStudentCard(created);
+      showStudentCard({ ...created, class_secret: adminSecret });
       elements["create-form"].classList.add("hidden");
     }
     const entered = await enterClass(
       state.pendingCreate.classCode,
       state.pendingCreate.adminSecret,
     );
-    saveSession(entered);
+    saveSession(entered, state.pendingCreate.adminSecret);
     state.pendingCreate = null;
     elements["entry-section"].classList.add("hidden");
     elements["create-section"].classList.add("hidden");
@@ -706,7 +707,7 @@
   });
 
   elements["copy-class-secret"].addEventListener("click", () => {
-    copyText(state.classInfo?.class_secret || "", "学生班级口令已复制");
+    copyText(state.classInfo?.class_secret || "", "口令已复制");
   });
 
   elements["refresh-board"].addEventListener("click", () => {
@@ -732,7 +733,7 @@
         credentials.classCode,
         credentials.adminSecret,
       );
-      saveSession(data);
+      saveSession(data, credentials.adminSecret);
       elements["entry-secret"].value = "";
       clearUrlCredentials(data.class_code);
       await loadBoard();
@@ -768,7 +769,7 @@
     showEntry();
     prefillEntry(urlCredentials);
     if (urlCredentials.classCode || urlCredentials.adminSecret) {
-      setNotice("请补全班级码和管理口令");
+      setNotice("请补全班级码和口令");
     }
   }
 
