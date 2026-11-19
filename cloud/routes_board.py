@@ -115,12 +115,10 @@ def _build_headline_with_manual(
 
 
 def _build_next_action(review_count: int, missing_count: int) -> str:
-    if review_count:
-        action = f"建议这节课先讲下面 {review_count} 道题"
-        if missing_count:
-            action += f"，再让没交的 {missing_count} 人补上练习"
-        return action
-    return "这节课没有需要集中讲的题，按逐人建议单独跟进"
+    # 讲评清单已搬到本机教师页，云端看板只负责「谁没交」
+    if missing_count:
+        return f"还有 {missing_count} 人没交，可以先催一下"
+    return "名单上的人都交了"
 
 
 def _build_question_reason(question: dict[str, Any]) -> str:
