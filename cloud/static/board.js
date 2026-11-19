@@ -1,13 +1,6 @@
 (() => {
   "use strict";
 
-  const ERROR_LABEL = {
-    concept: "概念错",
-    calc: "计算错",
-    careless: "看错",
-    method: "方法错",
-    none: "未标注",
-  };
   const REQUEST_TIMEOUT_MS = 75000;
   const SECURITY_GATEWAY_MESSAGE =
     "提交被安全网关临时拦截，请稍后重试（如果反复出现，请把学号里的特殊符号去掉）";
@@ -47,10 +40,6 @@
     studentsWrap: document.getElementById("students-wrap"),
     studentsBody: document.getElementById("students-body"),
     toggleStudents: document.getElementById("toggle-students"),
-    reviewEmpty: document.getElementById("review-empty"),
-    reviewWrap: document.getElementById("review-wrap"),
-    reviewBody: document.getElementById("review-body"),
-    exportXlsx: document.getElementById("export-xlsx"),
     toast: document.getElementById("toast"),
   };
 
@@ -374,41 +363,6 @@
     elements.copyMissing.disabled = false;
   }
 
-  function renderReview() {
-    const review = state.board ? state.board.review_list : [];
-    elements.reviewBody.replaceChildren();
-    if (!review.length) {
-      elements.reviewWrap.classList.add("hidden");
-      elements.reviewEmpty.classList.remove("hidden");
-      elements.reviewEmpty.textContent = state.board && state.board.totals.attempts
-        ? "暂无至少两人做过的题目"
-        : "还没有作答数据";
-      elements.exportXlsx.disabled = !state.board;
-      return;
-    }
-    for (const item of review) {
-      const types = Object.entries(item.error_types || {})
-        .sort((a, b) => b[1] - a[1])
-        .map(([name, count]) => `${ERROR_LABEL[name] || name} ${count}`)
-        .join("，");
-      const tr = document.createElement("tr");
-      tr.append(
-        cell(item.rank, "排名", true),
-        cell(item.qid, "题号"),
-        cell(item.wrong_devices, "错人数", true),
-        cell(item.devices, "做题人数", true),
-        cell(percent(item.wrong_rate), "错误率", true),
-        cell(item.avg_use_sec == null ? "—" : `${item.avg_use_sec}s`, "平均用时", true),
-        cell(types || "—", "错因分布"),
-        cell(item.reason, "为什么讲它"),
-      );
-      elements.reviewBody.append(tr);
-    }
-    elements.reviewWrap.classList.remove("hidden");
-    elements.reviewEmpty.classList.add("hidden");
-    elements.exportXlsx.disabled = false;
-  }
-
   function renderDashboard() {
     elements.dashboard.classList.toggle("loading", !state.board);
     const totals = state.board ? state.board.totals : {
@@ -424,7 +378,6 @@
     renderConclusion();
     renderMissing();
     renderStudents();
-    renderReview();
   }
 
   function hasJsonContentType(response) {
@@ -583,46 +536,6 @@
       textarea.remove();
       setNotice(copied ? "未交名单已复制" : "复制失败，请手动选择名单");
       setTimeout(() => setNotice("", false), 1600);
-    }
-  });
-
-  elements.exportXlsx.addEventListener("click", async () => {
-    const classCode = state.board?.class_code;
-    if (!classCode) return;
-    try {
-      const response = await fetchWithTimeout(`/api/export.xlsx?class_code=${encodeURIComponent(classCode)}`, {
-        headers: { Authorization: `Bearer ${state.token}` },
-      });
-      if (!response.ok) {
-        const isJson = hasJsonContentType(response);
-        const data = await readJsonBody(response);
-        if (response.status === 401) resetForUnauthorized();
-        throw new Error(
-          !isJson && response.status >= 400
-            ? SECURITY_GATEWAY_MESSAGE
-            : data.detail || `导出失败（${response.status}）`,
-        );
-      }
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition") || "";
-      const match = disposition.match(/filename="([^"]+)"/);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = match ? match[1] : `${classCode}_board.xlsx`;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      if (error.status === 401) {
-        resetForUnauthorized();
-      } else if (error.status) {
-        setNotice(error.message);
-      } else {
-        setNotice(error?.message || "导出失败，请稍后重试");
-        showRetry(loadBoard);
-      }
     }
   });
 
