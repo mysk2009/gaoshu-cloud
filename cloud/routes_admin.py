@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from typing import Any
 
@@ -15,12 +15,16 @@ router = APIRouter(prefix="/api/admin")
 
 PURGE_TEST_PREFIXES = ("DEMO", "AUD", "PG", "DSH", "TEST", "LV")
 PURGE_TABLES = (
+    "device_rebind_log",
     "attempts_cloud",
     "devices",
     "roster_cloud",
     "classes_cloud",
 )
 PURGE_COUNT_SQL = {
+    "device_rebind_log": (
+        "SELECT COUNT(*) AS total FROM device_rebind_log WHERE class_code = ?"
+    ),
     "attempts_cloud": (
         "SELECT COUNT(*) AS total FROM attempts_cloud WHERE class_code = ?"
     ),
@@ -33,6 +37,7 @@ PURGE_COUNT_SQL = {
     ),
 }
 PURGE_DELETE_SQL = {
+    "device_rebind_log": "DELETE FROM device_rebind_log WHERE class_code = ?",
     "attempts_cloud": "DELETE FROM attempts_cloud WHERE class_code = ?",
     "devices": "DELETE FROM devices WHERE class_code = ?",
     "roster_cloud": "DELETE FROM roster_cloud WHERE class_code = ?",
@@ -503,6 +508,9 @@ def get_roster(request: Request, class_code: str = "") -> dict:
         normalized_class_code = _require_class(
             database, connection, teacher_class_code
         )
+        rebind_cutoff = (
+            datetime.now() - timedelta(days=7)
+        ).isoformat(timespec="seconds")
         rows = database.fetchall(
             connection,
             """
@@ -526,12 +534,21 @@ def get_roster(request: Request, class_code: str = "") -> dict:
                   AND devices.student_no IS NOT NULL
                 ORDER BY devices.verified_at DESC
                 LIMIT 1
-              ) AS verified_at
+              ) AS verified_at,
+              (
+                SELECT COUNT(*)
+                FROM device_rebind_log
+                WHERE device_rebind_log.class_code =
+                      roster_cloud.class_code
+                  AND device_rebind_log.student_no =
+                      roster_cloud.student_no
+                  AND device_rebind_log.ts >= ?
+              ) AS rebind_count
             FROM roster_cloud
             WHERE roster_cloud.class_code = ?
             ORDER BY roster_cloud.student_no
             """,
-            (normalized_class_code,),
+            (rebind_cutoff, normalized_class_code),
         )
 
     return {
@@ -543,6 +560,9 @@ def get_roster(request: Request, class_code: str = "") -> dict:
                 "real_name": database.row_value(row, "real_name"),
                 "device_uuid": database.row_value(row, "device_uuid"),
                 "verified_at": database.row_value(row, "verified_at"),
+                "rebind_count": int(
+                    database.row_value(row, "rebind_count") or 0
+                ),
             }
             for row in rows
         ],
