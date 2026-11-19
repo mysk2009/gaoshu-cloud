@@ -62,6 +62,38 @@ DDL_STATEMENTS = (
     """,
 )
 
+DEVICE_REBIND_LOG_SQLITE_DDL = (
+    """
+CREATE TABLE IF NOT EXISTS device_rebind_log (
+  id              INTEGER PRIMARY KEY AUTO"""
+    """INCREMENT,
+  class_code      TEXT NOT NULL,
+  student_no      TEXT NOT NULL,
+  old_device_uuid TEXT,
+  new_device_uuid TEXT,
+  reason          TEXT,
+  ts              TEXT NOT NULL
+)
+"""
+)
+
+DEVICE_REBIND_LOG_POSTGRES_DDL = """
+CREATE TABLE IF NOT EXISTS device_rebind_log (
+  id              BIGSERIAL PRIMARY KEY,
+  class_code      TEXT NOT NULL,
+  student_no      TEXT NOT NULL,
+  old_device_uuid TEXT,
+  new_device_uuid TEXT,
+  reason          TEXT,
+  ts              TEXT NOT NULL
+)
+"""
+
+DEVICE_REBIND_LOG_INDEX_DDL = """
+CREATE INDEX IF NOT EXISTS idx_rebind_student
+ON device_rebind_log(class_code, student_no, ts)
+"""
+
 BACKFILL_ATTEMPTS_STUDENT_NO_SQL = """
 UPDATE attempts_cloud
 SET student_no = (
@@ -94,6 +126,12 @@ def ensure_schema(database: Database) -> None:
     with database.transaction() as connection:
         for statement in DDL_STATEMENTS:
             connection.execute(statement)
+        connection.execute(
+            DEVICE_REBIND_LOG_SQLITE_DDL
+            if database.backend == "sqlite"
+            else DEVICE_REBIND_LOG_POSTGRES_DDL
+        )
+        connection.execute(DEVICE_REBIND_LOG_INDEX_DDL)
 
         if database.backend == "sqlite":
             columns = [
