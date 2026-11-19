@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 import threading
 import time
 from typing import Any
@@ -21,6 +21,8 @@ router = APIRouter(prefix="/api")
 
 BINDING_FAILURE_LIMIT = 5
 BINDING_FAILURE_WINDOW_SECONDS = 10 * 60
+REBIND_LIMIT = 3
+REBIND_WINDOW_HOURS = 24
 MAX_USE_SECONDS = 86400
 
 # 免费版 Cloud Run 按单实例渲染；多实例部署需把此计数迁移到 Redis。
@@ -153,13 +155,17 @@ async def receive_attempts(request: Request) -> dict:
         if len(attempts) > 5000:
             raise HTTPException(status_code=400, detail="单次提交过多，请分批")
 
-        device_row = database.fetchone(
-            connection,
-            """
+        device_statement = """
             SELECT class_code, student_no
             FROM devices
             WHERE device_uuid = ?
-            """,
+        """
+        if database.backend == "postgres":
+            # Keep this device's binding stable until the whole sync commits.
+            device_statement += " FOR UPDATE"
+        device_row = database.fetchone(
+            connection,
+            device_statement,
             (device_uuid,),
         )
         if device_row is not None:
@@ -181,13 +187,17 @@ async def receive_attempts(request: Request) -> dict:
         if not student_no or not real_name:
             raise HTTPException(status_code=400, detail="请先绑定学号与姓名")
 
-        roster_row = database.fetchone(
-            connection,
-            """
+        roster_statement = """
             SELECT real_name
             FROM roster_cloud
             WHERE class_code = ? AND student_no = ?
-            """,
+        """
+        if database.backend == "postgres":
+            # Serialize takeover checks for one student across cloud processes.
+            roster_statement += " FOR UPDATE"
+        roster_row = database.fetchone(
+            connection,
+            roster_statement,
             (class_code, student_no),
         )
         if roster_row is None:
@@ -212,46 +222,106 @@ async def receive_attempts(request: Request) -> dict:
                 detail=f"姓名与该学号登记的不一致（登记：{mask_name(registered_name)}）",
             )
 
-        student_other_device = database.fetchone(
+        _clear_binding_failures(device_uuid)
+        now = datetime.now().isoformat(timespec="seconds")
+        old_student_rows = database.fetchall(
             connection,
             """
-            SELECT 1
+            SELECT device_uuid
             FROM devices
             WHERE class_code = ? AND student_no = ? AND device_uuid <> ?
             """,
             (class_code, student_no, device_uuid),
         )
-        if student_other_device is not None:
-            raise HTTPException(
-                status_code=409, detail="该学号已绑定其他设备，请找老师解绑"
+        existing_student_no = (
+            database.row_value(device_row, "student_no")
+            if device_row is not None
+            else None
+        )
+        switched_student = bool(
+            existing_student_no and existing_student_no != student_no
+        )
+        takeover_operations = len(old_student_rows)
+        if takeover_operations:
+            cutoff = (
+                datetime.now() - timedelta(hours=REBIND_WINDOW_HOURS)
+            ).isoformat(timespec="seconds")
+            count_row = database.fetchone(
+                connection,
+                """
+                SELECT COUNT(*) AS total
+                FROM device_rebind_log
+                WHERE class_code = ? AND student_no = ? AND ts >= ?
+                  AND reason = ?
+                """,
+                (class_code, student_no, cutoff, "takeover"),
             )
-
-        if device_row is not None:
-            existing_student_no = database.row_value(device_row, "student_no")
-            if existing_student_no and existing_student_no != student_no:
+            rebind_count = int(database.row_value(count_row, "total") or 0)
+            if rebind_count + takeover_operations > REBIND_LIMIT:
                 raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"本机已绑定学号 {existing_student_no}，"
-                        "如需更换请找老师解绑"
-                    ),
+                    status_code=429,
+                    detail="该学号近期频繁更换设备，请让老师解除绑定",
                 )
 
-        if not attempts:
-            total_row = database.fetchone(
+        for old_row in old_student_rows:
+            old_device_uuid = database.row_value(old_row, "device_uuid")
+            database.execute(
                 connection,
-                "SELECT COUNT(*) AS total FROM attempts_cloud WHERE class_code = ?",
-                (class_code,),
+                """
+                UPDATE devices
+                SET student_no = NULL
+                WHERE class_code = ? AND student_no = ?
+                  AND device_uuid = ?
+                """,
+                (class_code, student_no, old_device_uuid),
             )
-            return {
-                "accepted": 0,
-                "duplicated": 0,
-                "skipped": 0,
-                "total_received": database.row_value(total_row, "total"),
-            }
+            database.execute(
+                connection,
+                """
+                INSERT INTO device_rebind_log
+                  (class_code, student_no, old_device_uuid,
+                   new_device_uuid, reason, ts)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    class_code,
+                    student_no,
+                    old_device_uuid,
+                    device_uuid,
+                    "takeover",
+                    now,
+                ),
+            )
 
-        _clear_binding_failures(device_uuid)
-        now = datetime.now().isoformat(timespec="seconds")
+        if switched_student:
+            database.execute(
+                connection,
+                """
+                UPDATE devices
+                SET student_no = NULL
+                WHERE device_uuid = ? AND class_code = ?
+                  AND student_no = ?
+                """,
+                (device_uuid, class_code, existing_student_no),
+            )
+            database.execute(
+                connection,
+                """
+                INSERT INTO device_rebind_log
+                  (class_code, student_no, old_device_uuid,
+                   new_device_uuid, reason, ts)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    class_code,
+                    existing_student_no,
+                    device_uuid,
+                    device_uuid,
+                    "device_switched_student",
+                    now,
+                ),
+            )
+
         accepted = 0
         skipped = 0
         statement = """
