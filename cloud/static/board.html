@@ -320,7 +320,7 @@
     <header class="hero">
       <div>
         <h1>高数课堂看板</h1>
-        <p class="subtitle">提交进度、逐人情况与讲评清单</p>
+        <p class="subtitle">提交进度与逐人情况</p>
       </div>
       <form id="login-form" class="auth">
         <input id="login-code" type="text" autocomplete="off" placeholder="班级码，如 F34F05" aria-label="班级码" required>
@@ -401,29 +401,6 @@
           </div>
         </section>
 
-        <section class="panel wide">
-          <div class="panel-head">
-            <h2>讲评清单</h2>
-            <button id="export-xlsx" type="button" disabled>导出 Excel</button>
-          </div>
-          <p id="review-empty" class="empty">输入班级码</p>
-          <div id="review-wrap" class="table-wrap hidden">
-            <table class="responsive-table review-table">
-              <colgroup>
-                <col style="width: 8%">
-                <col style="width: 11%">
-                <col style="width: 11%">
-                <col style="width: 12%">
-                <col style="width: 11%">
-                <col style="width: 12%">
-                <col style="width: 17%">
-                <col style="width: 20%">
-              </colgroup>
-              <thead><tr><th>排名</th><th>题号</th><th>错人数</th><th>做题人数</th><th>错误率</th><th>平均用时</th><th>错因分布</th><th>为什么讲它</th></tr></thead>
-              <tbody id="review-body"></tbody>
-            </table>
-          </div>
-        </section>
       </div>
     </section>
   </main>
