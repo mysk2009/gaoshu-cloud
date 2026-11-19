@@ -1,13 +1,6 @@
 (() => {
   "use strict";
 
-  const ERROR_LABEL = {
-    concept: "概念",
-    calc: "计算",
-    careless: "看错",
-    method: "方法",
-    none: "未标注",
-  };
   const TOKEN_KEY = "gs_cloud_teacher";
   const LEGACY_TOKEN_KEY = "teacherToken";
   const CLASS_INFO_KEY = "teacherClassInfo";
@@ -50,8 +43,7 @@
     "board-class-meta", "copy-class-secret", "refresh-board", "headline",
     "next-action", "stat-submitted", "stat-roster", "stat-missing", "stat-attempts",
     "copy-missing", "missing-callout", "missing-empty", "missing-chips", "students-empty",
-    "students-wrap", "students-body", "toggle-students", "review-empty", "review-wrap",
-    "review-body", "export-xlsx", "exit-board", "toast",
+    "students-wrap", "students-body", "toggle-students", "exit-board", "toast",
   ]) {
     elements[id] = document.getElementById(id);
   }
@@ -322,23 +314,20 @@
     elements["dashboard-section"].classList.add("hidden");
     elements["dashboard-section"].classList.remove("loading");
     for (const id of [
-      "students-wrap", "review-wrap", "missing-chips",
+      "students-wrap", "missing-chips",
     ]) {
       elements[id].classList.add("hidden");
     }
     elements["missing-empty"].textContent = "先填老师给你的班级码";
     elements["students-empty"].textContent = "先填老师给你的班级码";
-    elements["review-empty"].textContent = "先填老师给你的班级码";
     elements["missing-callout"].classList.add("hidden");
     elements["copy-missing"].disabled = true;
-    elements["export-xlsx"].disabled = true;
     for (const id of [
       "stat-submitted", "stat-roster", "stat-missing", "stat-attempts",
     ]) {
       elements[id].textContent = "0";
     }
     elements["students-body"].replaceChildren();
-    elements["review-body"].replaceChildren();
   }
 
   function showEntry() {
@@ -583,42 +572,6 @@
     }
   }
 
-  function errorTypesFor(item) {
-    const types = Object.entries(item?.error_types || {})
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, count]) => `${ERROR_LABEL[name] || "其他"}（${count} 人）`);
-    return types.length ? types.join("、") : "未标注";
-  }
-
-  function renderReview() {
-    const review = state.board?.review_list || [];
-    elements["review-body"].replaceChildren();
-    if (!review.length) {
-      elements["review-wrap"].classList.add("hidden");
-      elements["review-empty"].classList.remove("hidden");
-      elements["review-empty"].textContent = state.board?.totals.roster
-        ? "这个班目前没有明显共性错题"
-        : "这个班还没导名单";
-      return;
-    }
-    for (const item of review) {
-      const row = document.createElement("tr");
-      row.append(
-        numberCell(item.rank, "排名"),
-        textCell(item.qid, "题号"),
-        numberCell(item.wrong_devices, "错人数"),
-        numberCell(item.devices, "做题人数"),
-        numberCell(percent(item.wrong_rate), "错误率"),
-        numberCell(item.avg_use_sec == null ? "—" : `${item.avg_use_sec} 秒`, "平均用时"),
-        textCell(errorTypesFor(item), "错因分布"),
-        textCell(item.reason, "为什么讲它"),
-      );
-      elements["review-body"].append(row);
-    }
-    elements["review-wrap"].classList.remove("hidden");
-    elements["review-empty"].classList.add("hidden");
-  }
-
   function renderBoard() {
     const board = state.board;
     if (!board) return;
@@ -640,8 +593,6 @@
     elements["stat-attempts"].textContent = String(totals.attempts || 0);
     renderMissing();
     renderStudents();
-    renderReview();
-    elements["export-xlsx"].disabled = false;
     elements["dashboard-section"].classList.remove("loading");
     elements["dashboard-section"].classList.remove("hidden");
   }
@@ -709,39 +660,6 @@
       error.requestId = connectionId;
       throw error;
     }
-  }
-
-  async function exportBoard() {
-    if (!state.board) return;
-    showConnecting();
-    const classCode = encodeURIComponent(state.board.class_code || "");
-    const response = await fetchWithTimeout(`/api/export.xlsx?class_code=${classCode}`, {
-      headers: { Authorization: `Bearer ${state.token}` },
-    });
-    if (!response.ok) {
-      const isJson = hasJsonContentType(response);
-      const data = await readJsonBody(response);
-      const error = new Error(
-        !isJson && response.status >= 400
-          ? SECURITY_GATEWAY_MESSAGE
-          : data.detail || `导出失败（${response.status}）`,
-      );
-      error.status = response.status;
-      throw error;
-    }
-    const blob = await response.blob();
-    const disposition = response.headers.get("Content-Disposition") || "";
-    const match = disposition.match(/filename="([^"]+)"/);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = match ? match[1] : `${state.board.class_code}_board.xlsx`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    clearRetry();
-    showConnected(state.connectionId);
   }
 
   async function checkHealth(onReady) {
@@ -898,10 +816,6 @@
   elements["toggle-students"].addEventListener("click", () => {
     state.showAllStudents = !state.showAllStudents;
     renderStudents();
-  });
-
-  elements["export-xlsx"].addEventListener("click", () => {
-    runButtonAction(elements["export-xlsx"], exportBoard);
   });
 
   elements["exit-board"].addEventListener("click", () => {
