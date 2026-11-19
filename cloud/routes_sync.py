@@ -329,7 +329,13 @@ async def receive_attempts(request: Request) -> dict:
               (device_uuid, attempt_id, class_code, student_no, qid, correct,
                use_sec, error_type, ts, received_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(device_uuid, attempt_id) DO NOTHING
+            ON CONFLICT(device_uuid, attempt_id) DO UPDATE SET
+              error_type = CASE
+                WHEN COALESCE(attempts_cloud.error_type, '') IN ('', 'none')
+                 AND COALESCE(excluded.error_type, '') NOT IN ('', 'none')
+                THEN excluded.error_type
+                ELSE attempts_cloud.error_type
+              END
         """
 
         for attempt in attempts:
