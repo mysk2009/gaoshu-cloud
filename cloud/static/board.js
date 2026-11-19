@@ -182,13 +182,9 @@
       `名单 ${rosterCount} 人，${submittedCount} 人已交`
       + `${manualSuffix}，${missing.length} 人未交`
     );
-    const reviewCount = Array.isArray(state.board.review_list)
-      ? state.board.review_list.length
-      : 0;
-    state.board.next_action = reviewCount
-      ? `建议这节课先讲下面 ${reviewCount} 道题`
-        + (missing.length ? `，再让没交的 ${missing.length} 人补上练习` : "")
-      : "这节课没有需要集中讲的题，按逐人建议单独跟进";
+    state.board.next_action = missing.length
+      ? `还有 ${missing.length} 人没交，可以先催一下`
+      : (submittedCount > 0 ? "名单上的人都交了" : "还没有人交");
   }
 
   function renderConclusion() {
