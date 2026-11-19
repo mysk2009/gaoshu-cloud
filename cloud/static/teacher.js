@@ -7,11 +7,11 @@
   const LOCAL_SYSTEM_URL = "http://127.0.0.1:8000";
   const REQUEST_TIMEOUT_MS = 75000;
   const WAKE_MESSAGE =
-    "正在连接服务器…（免费实例首次唤醒可能需要 30–60 秒，请勿关闭页面）";
+    "正在连接服务器…（启动可能需要等一会儿，请勿关闭页面）";
   const CONNECTED_MESSAGE = "服务器已连接";
   const HEALTH_FAILED_MESSAGE = "连不上服务器，请点重试";
   const REQUEST_FAILED_MESSAGE =
-    "请求超时：服务器可能正在唤醒，点重试";
+    "请求超时：服务器启动较慢，点重试";
   const LOGIN_FAILED_STATUS_MESSAGE = "服务器已连接（登录没成功）";
   const OPERATION_FAILED_STATUS_MESSAGE = "服务器已连接（操作没成功）";
   const AUTO_LOGIN_FAILED_MESSAGE =
@@ -318,8 +318,8 @@
     ]) {
       elements[id].classList.add("hidden");
     }
-    elements["missing-empty"].textContent = "先填老师给你的班级码";
-    elements["students-empty"].textContent = "先填老师给你的班级码";
+    elements["missing-empty"].textContent = "进班后这里显示谁没交";
+    elements["students-empty"].textContent = "进班后这里显示每个人的情况";
     elements["missing-callout"].classList.add("hidden");
     elements["copy-missing"].disabled = true;
     for (const id of [
@@ -339,7 +339,7 @@
     elements["entry-code"].value = "";
     elements["entry-secret"].value = "";
     resetDashboard();
-    setNotice("先填老师给你的班级码");
+    setNotice("填班级码和口令进班");
   }
 
   function prefillEntry(credentials) {
@@ -642,7 +642,7 @@
 
   async function enterClass(classCode, adminSecret) {
     if (!classCode) {
-      setNotice("先填老师给你的班级码");
+      setNotice("填班级码和口令进班");
       return null;
     }
     const connectionId = showConnecting();
@@ -710,7 +710,7 @@
   async function submitEntry() {
     const classCode = normalizeClassCode(elements["entry-code"].value);
     if (!classCode) {
-      setNotice("先填老师给你的班级码");
+      setNotice("填班级码和口令进班");
       return;
     }
     const data = await enterClass(classCode, elements["entry-secret"].value);
