@@ -40,6 +40,7 @@
     studentsWrap: document.getElementById("students-wrap"),
     studentsBody: document.getElementById("students-body"),
     toggleStudents: document.getElementById("toggle-students"),
+    resetSubmissions: document.getElementById("reset-submissions"),
     toast: document.getElementById("toast"),
   };
 
@@ -216,6 +217,7 @@
       elements.studentsEmpty.classList.remove("hidden");
       elements.studentsEmpty.textContent = "还没导名单";
       elements.toggleStudents.classList.add("hidden");
+  elements.resetSubmissions?.classList.add("hidden");
       return;
     }
 
@@ -274,6 +276,7 @@
     elements.studentsWrap.classList.remove("hidden");
     elements.studentsEmpty.classList.add("hidden");
     elements.toggleStudents.classList.toggle("hidden", students.length <= 5);
+    elements.resetSubmissions?.classList.remove("hidden");
     elements.toggleStudents.textContent = state.showAllStudents ? "收起" : "展开全部";
   }
 
@@ -504,6 +507,31 @@
     const action = state.retryAction;
     clearRetry();
     if (action) action();
+  });
+
+  elements.resetSubmissions?.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "把全班重置为「未交」？\n\n历史作答不删除，只是此前的作答不再计入提交状态和榜单，学生可以重新提交。"
+    );
+    if (!ok) return;
+    const button = elements.resetSubmissions;
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "重置中…";
+    try {
+      const response = await fetchWithTimeout("/api/teacher/reset_submissions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${state.token}` },
+      });
+      await parseResponse(response);
+      showToast("已重置，全班回到未交");
+      await loadBoard();
+    } catch (error) {
+      setNotice(error?.message || "重置失败，请稍后重试");
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
   });
 
   elements.toggleStudents.addEventListener("click", () => {
