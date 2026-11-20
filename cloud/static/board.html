@@ -294,7 +294,19 @@
       vertical-align: top;
       overflow-wrap: anywhere;
     }
-    th { color: var(--muted); font-size: 13px; font-weight: 600; }
+    /* 数字列统一右对齐 + 等宽数字，避免长短不齐看起来歪 */
+.students-table th:nth-child(3), .students-table td:nth-child(3),
+.students-table th:nth-child(4), .students-table td:nth-child(4),
+.students-table th:nth-child(5), .students-table td:nth-child(5) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.review-table th:not(:nth-child(2)):not(:nth-child(9)),
+.review-table td:not(:nth-child(2)):not(:nth-child(9)) {
+  font-variant-numeric: tabular-nums;
+}
+th { color: var(--muted); font-size: 13px; font-weight: 600; }
     .num { text-align: right; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; }
     @media (max-width: 760px) {
@@ -382,6 +394,7 @@
         <section class="panel">
           <div class="panel-head">
             <h2>逐人明细</h2>
+            <button id="reset-submissions" class="secondary hidden" type="button" title="把全班重置为未交（历史作答保留，只清提交状态）">重置全部提交</button>
             <button id="toggle-students" class="secondary hidden" type="button">展开全部</button>
           </div>
           <p id="students-empty" class="empty">输入班级码</p>
