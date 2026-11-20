@@ -612,8 +612,9 @@
     elements["dashboard-section"].classList.remove("hidden");
     elements["dashboard-section"].classList.add("loading");
     try {
-      const response = await fetchWithTimeout("/api/board", {
+      const response = await fetchWithTimeout(`/api/board?t=${Date.now()}`, {
         headers: { Authorization: `Bearer ${state.token}` },
+        cache: "no-store",
       });
       state.board = await parseResponse(response);
       state.showAllStudents = false;
