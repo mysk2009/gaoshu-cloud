@@ -43,7 +43,8 @@
     "board-class-meta", "copy-class-secret", "refresh-board", "headline",
     "next-action", "stat-submitted", "stat-roster", "stat-missing", "stat-attempts",
     "copy-missing", "missing-callout", "missing-empty", "missing-chips", "students-empty",
-    "students-wrap", "students-body", "toggle-students", "exit-board", "toast",
+    "students-wrap", "students-body", "toggle-students", "reset-submissions",
+    "exit-board", "toast",
   ]) {
     elements[id] = document.getElementById(id);
   }
@@ -391,6 +392,7 @@
       elements["students-empty"].classList.remove("hidden");
       elements["students-empty"].textContent = "这个班还没导名单";
       elements["toggle-students"].classList.add("hidden");
+      elements["reset-submissions"]?.classList.add("hidden");
       return;
     }
     const visibleStudents = state.showAllStudents
@@ -459,6 +461,7 @@
     elements["toggle-students"].textContent = (
       state.showAllStudents ? "收起" : "展开全部"
     );
+    elements["reset-submissions"]?.classList.remove("hidden");
   }
 
   async function setManualSubmission(studentNo, submitted) {
@@ -811,6 +814,31 @@
 
   elements["refresh-board"].addEventListener("click", () => {
     runButtonAction(elements["refresh-board"], loadBoard);
+  });
+
+  elements["reset-submissions"].addEventListener("click", async () => {
+    const ok = window.confirm(
+      "把全班重置为「未交」？\n\n历史作答不删除，只是此前的作答不再计入提交状态和榜单，学生可以重新提交。"
+    );
+    if (!ok) return;
+    const button = elements["reset-submissions"];
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "重置中…";
+    try {
+      const response = await fetchWithTimeout("/api/teacher/reset_submissions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${state.token}` },
+      });
+      await parseResponse(response);
+      showToast("已重置，全班回到未交");
+      await loadBoard();
+    } catch (error) {
+      setNotice(error?.message || "重置失败，请稍后重试");
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
   });
 
   elements["toggle-students"].addEventListener("click", () => {
