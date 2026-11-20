@@ -512,18 +512,35 @@ def reset_submissions(request: Request, class_code: str = "") -> dict:
     """
     scoped_class_code = require_teacher_class(request, class_code)
     reset_at = datetime.now().isoformat(timespec="seconds")
-    with request.app.state.database.transaction() as connection:
-        connection.execute(
-            "UPDATE roster_cloud SET manual_submitted = NULL WHERE class_code = ?",
-            (scoped_class_code,),
-        )
-        connection.execute(
-            """
-            INSERT INTO class_state (class_code, reset_at)
-            VALUES (?, ?)
-            ON CONFLICT(class_code) DO UPDATE SET reset_at = excluded.reset_at
-            """,
-            (scoped_class_code, reset_at),
+    database = request.app.state.database
+    try:
+        with database.transaction() as connection:
+            database.execute(
+                connection,
+                "UPDATE roster_cloud SET manual_submitted = NULL WHERE class_code = ?",
+                (scoped_class_code,),
+            )
+            existing = database.fetchone(
+                connection,
+                "SELECT reset_at FROM class_state WHERE class_code = ?",
+                (scoped_class_code,),
+            )
+            if existing is None:
+                database.execute(
+                    connection,
+                    "INSERT INTO class_state (class_code, reset_at) VALUES (?, ?)",
+                    (scoped_class_code, reset_at),
+                )
+            else:
+                database.execute(
+                    connection,
+                    "UPDATE class_state SET reset_at = ? WHERE class_code = ?",
+                    (reset_at, scoped_class_code),
+                )
+    except Exception as exc:  # 让前端能直接看到原因，不再只显示 500
+        raise HTTPException(
+            status_code=500,
+            detail="重置失败：%s: %s" % (type(exc).__name__, exc),
         )
     return {"ok": True, "class_code": scoped_class_code, "reset_at": reset_at}
 
