@@ -5,7 +5,13 @@ from cloud.db import Database
 
 DDL_STATEMENTS = (
     """
-    CREATE TABLE IF NOT EXISTS classes_cloud (
+    CREATE TABLE IF NOT EXISTS class_state (
+      class_code TEXT PRIMARY KEY,
+      reset_at   TEXT
+    )
+    """,
+    """
+CREATE TABLE IF NOT EXISTS classes_cloud (
       class_code   TEXT PRIMARY KEY,
       class_name   TEXT,
       teacher_name TEXT,
