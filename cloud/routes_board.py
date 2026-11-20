@@ -39,9 +39,6 @@ WITH resolved_attempts AS (
   LEFT JOIN devices AS d
     ON d.device_uuid = a.device_uuid
    AND d.class_code = a.class_code
-  WHERE COALESCE(a.ts, a.received_at) >= COALESCE(
-    (SELECT reset_at FROM class_state WHERE class_code = a.class_code), ''
-  )
 )
 """
 
@@ -198,6 +195,9 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
                 LIMIT 1
               ) AS device_uuid,
               COUNT(a.attempt_id) AS attempt_count,
+              SUM(CASE WHEN COALESCE(a.ts, a.received_at) >= COALESCE(
+                    (SELECT reset_at FROM class_state WHERE class_code = r.class_code), ''
+                  ) THEN 1 ELSE 0 END) AS post_reset_count,
               COALESCE(SUM(CASE WHEN a.correct = 1 THEN 1 ELSE 0 END), 0)
                 AS correct_count,
               MIN(COALESCE(a.ts, a.received_at)) AS first_at,
@@ -315,6 +315,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
     for row in student_rows:
         student_no = str(database.row_value(row, "student_no"))
         attempt_count = int(database.row_value(row, "attempt_count") or 0)
+        post_reset_count = int(database.row_value(row, "post_reset_count") or 0)
         correct_count = int(database.row_value(row, "correct_count") or 0)
         aggregate = student_aggregates.setdefault(
             student_no,
@@ -324,6 +325,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
                 "submitted": False,
                 "manual_submitted": False,
                 "attempt_count": 0,
+                "post_reset_count": 0,
                 "correct_count": 0,
                 "first_at": None,
                 "last_at": None,
@@ -331,8 +333,9 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
             },
         )
         aggregate["attempt_count"] += attempt_count
+        aggregate["post_reset_count"] += post_reset_count
         aggregate["correct_count"] += correct_count
-        if attempt_count > 0:
+        if post_reset_count > 0:
             aggregate["submitted"] = True
         if database.row_value(row, "manual_submitted"):
             aggregate["manual_submitted"] = True
@@ -370,7 +373,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
             or database.row_value(roster_row, "manual_submitted")
         )
         aggregate["submitted"] = bool(
-            aggregate["attempt_count"] or aggregate["manual_submitted"]
+            aggregate["post_reset_count"] or aggregate["manual_submitted"]
         )
         aggregate["submitted_by"] = (
             "auto"
