@@ -281,7 +281,8 @@
       flex-wrap: wrap;
       margin-bottom: 12px;
     }
-    .section-head h2 { margin: 0; }
+    .head-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.section-head h2 { margin: 0; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; }
     .chip {
       padding: 7px 10px;
@@ -380,6 +381,14 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* 列宽固定，数字列右对齐后不再挤在一起 */
+.students-table { table-layout: fixed; }
+.students-table th:nth-child(1), .students-table td:nth-child(1) { width: 14%; }
+.students-table th:nth-child(2), .students-table td:nth-child(2) { width: 14%; }
+.students-table th:nth-child(3), .students-table td:nth-child(3) { width: 9%; }
+.students-table th:nth-child(4), .students-table td:nth-child(4) { width: 9%; }
+.students-table th:nth-child(5), .students-table td:nth-child(5) { width: 11%; }
+.students-table th:nth-child(6), .students-table td:nth-child(6) { width: 43%; padding-left: 22px; }
 th { color: var(--muted); font-size: 13px; font-weight: 600; }
     .num { text-align: right; }
     .advice { color: #344054; }
@@ -562,8 +571,10 @@ th { color: var(--muted); font-size: 13px; font-weight: 600; }
       <section class="panel">
         <div class="section-head">
           <h2>每个人的情况</h2>
-          <button id="reset-submissions" class="secondary hidden" type="button" title="把全班重置为未交（历史作答保留，只清提交状态）">重置全部提交</button>
-          <button id="toggle-students" class="secondary hidden" type="button">展开全部</button>
+          <div class="head-actions">
+            <button id="reset-submissions" class="secondary hidden" type="button" title="把全班重置为未交（历史作答保留，只清提交状态）">重置全部提交</button>
+            <button id="toggle-students" class="secondary hidden" type="button">展开全部</button>
+          </div>
         </div>
         <p id="students-empty" class="empty">进班后这里显示每个人的情况</p>
         <div id="students-wrap" class="table-wrap hidden">
