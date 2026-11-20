@@ -372,7 +372,15 @@
       vertical-align: top;
       overflow-wrap: anywhere;
     }
-    th { color: var(--muted); font-size: 13px; font-weight: 600; }
+    /* 数字列右对齐 + 等宽数字，长短不再参差 */
+.students-table th:nth-child(3), .students-table td:nth-child(3),
+.students-table th:nth-child(4), .students-table td:nth-child(4),
+.students-table th:nth-child(5), .students-table td:nth-child(5) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+th { color: var(--muted); font-size: 13px; font-weight: 600; }
     .num { text-align: right; }
     .advice { color: #344054; }
     .dashboard-actions { justify-content: flex-end; margin-top: 16px; }
@@ -554,6 +562,7 @@
       <section class="panel">
         <div class="section-head">
           <h2>每个人的情况</h2>
+          <button id="reset-submissions" class="secondary hidden" type="button" title="把全班重置为未交（历史作答保留，只清提交状态）">重置全部提交</button>
           <button id="toggle-students" class="secondary hidden" type="button">展开全部</button>
         </div>
         <p id="students-empty" class="empty">进班后这里显示每个人的情况</p>
