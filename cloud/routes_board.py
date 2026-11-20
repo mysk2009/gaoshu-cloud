@@ -39,6 +39,9 @@ WITH resolved_attempts AS (
   LEFT JOIN devices AS d
     ON d.device_uuid = a.device_uuid
    AND d.class_code = a.class_code
+  WHERE COALESCE(a.ts, a.received_at) >= COALESCE(
+    (SELECT reset_at FROM class_state WHERE class_code = a.class_code), ''
+  )
 )
 """
 
@@ -446,7 +449,7 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
             "avg_use_sec": item["avg_use_sec"],
             "reason": _build_question_reason(item),
         }
-        for rank, item in enumerate(weak_questions[:8], start=1)
+        for rank, item in enumerate(weak_questions[:20], start=1)
     ]
     missing = [
         {
@@ -499,6 +502,30 @@ def build_board_data(database: Any, raw_class_code: object) -> dict:
         "next_action": _build_next_action(len(review_list), missing_count),
         "missing_callout": _missing_callout(missing),
     }
+
+
+@router.post("/api/teacher/reset_submissions")
+def reset_submissions(request: Request, class_code: str = "") -> dict:
+    """老师一键把全班重置为「未交」：清掉手工标记，并记一个时间截断点。
+
+    历史作答不删除（云端留档），只是此前的作答不再计入提交状态与榜单。
+    """
+    scoped_class_code = require_teacher_class(request, class_code)
+    reset_at = datetime.now().isoformat(timespec="seconds")
+    with request.app.state.database.transaction() as connection:
+        connection.execute(
+            "UPDATE roster_cloud SET manual_submitted = NULL WHERE class_code = ?",
+            (scoped_class_code,),
+        )
+        connection.execute(
+            """
+            INSERT INTO class_state (class_code, reset_at)
+            VALUES (?, ?)
+            ON CONFLICT(class_code) DO UPDATE SET reset_at = excluded.reset_at
+            """,
+            (scoped_class_code, reset_at),
+        )
+    return {"ok": True, "class_code": scoped_class_code, "reset_at": reset_at}
 
 
 @router.get("/board")
