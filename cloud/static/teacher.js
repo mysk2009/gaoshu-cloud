@@ -600,6 +600,21 @@
     elements["dashboard-section"].classList.remove("hidden");
   }
 
+  // 静默刷新：只更新数据并重绘，不进入 loading 态、不整页重载，避免看板闪一下看不清
+  async function refreshBoardQuietly() {
+    if (!state.token) return;
+    try {
+      const response = await fetchWithTimeout(`/api/board?t=${Date.now()}`, {
+        headers: { Authorization: `Bearer ${state.token}` },
+        cache: "no-store",
+      });
+      state.board = await parseResponse(response);
+      renderBoard();
+    } catch (_) {
+      // 静默失败：保留原画面，不打断老师
+    }
+  }
+
   async function loadBoard() {
     if (!state.token || !state.classInfo?.class_code) {
       showEntry();
@@ -833,7 +848,7 @@
       });
       await parseResponse(response);
       showToast("已重置，全班回到未交");
-      await loadBoard();
+      await refreshBoardQuietly();
     } catch (error) {
       setNotice(error?.message || "重置失败，请稍后重试");
     } finally {
