@@ -381,14 +381,17 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-/* 列宽固定，数字列右对齐后不再挤在一起 */
+/* 列宽均衡：学号/姓名留足，建议列不再空一大片；数字列居中更整齐 */
 .students-table { table-layout: fixed; }
-.students-table th:nth-child(1), .students-table td:nth-child(1) { width: 14%; }
-.students-table th:nth-child(2), .students-table td:nth-child(2) { width: 14%; }
-.students-table th:nth-child(3), .students-table td:nth-child(3) { width: 9%; }
-.students-table th:nth-child(4), .students-table td:nth-child(4) { width: 9%; }
-.students-table th:nth-child(5), .students-table td:nth-child(5) { width: 11%; }
-.students-table th:nth-child(6), .students-table td:nth-child(6) { width: 43%; padding-left: 22px; }
+.students-table th:nth-child(1), .students-table td:nth-child(1) { width: 20%; }
+.students-table th:nth-child(2), .students-table td:nth-child(2) { width: 20%; }
+.students-table th:nth-child(3), .students-table td:nth-child(3) { width: 12%; }
+.students-table th:nth-child(4), .students-table td:nth-child(4) { width: 10%; }
+.students-table th:nth-child(5), .students-table td:nth-child(5) { width: 12%; }
+.students-table th:nth-child(6), .students-table td:nth-child(6) { width: 26%; padding-left: 16px; }
+.students-table th:nth-child(3), .students-table td:nth-child(3),
+.students-table th:nth-child(4), .students-table td:nth-child(4),
+.students-table th:nth-child(5), .students-table td:nth-child(5) { text-align: center; }
 th { color: var(--muted); font-size: 13px; font-weight: 600; }
     .num { text-align: right; }
     .advice { color: #344054; }
