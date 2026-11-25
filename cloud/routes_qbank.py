@@ -14,6 +14,7 @@ from cloud.routes_auth import require_teacher_class
 router = APIRouter(prefix="/api")
 
 QBANK_ACTIONS = {"add", "update", "remove"}
+GLOBAL_QBANK_BATCH_SIZE = 500
 
 
 async def _json_object(request: Request) -> dict[str, Any]:
@@ -78,6 +79,174 @@ def _decode_payload(value: Any) -> Any:
         return json.loads(value)
     except Exception:
         return value
+
+
+def _require_admin(request: Request) -> None:
+    provided = request.headers.get("X-Admin-Token", "")
+    expected = request.app.state.settings.admin_token
+    if not expected or not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="管理员口令不正确")
+
+
+def _normalize_global_change(change: object) -> tuple[str, str, str | None] | None:
+    if not isinstance(change, dict):
+        return None
+
+    raw_qid = change.get("qid")
+    if not isinstance(raw_qid, str) or not raw_qid.strip():
+        return None
+    qid = raw_qid.strip()
+
+    action = change.get("action")
+    if not isinstance(action, str) or action not in QBANK_ACTIONS:
+        return None
+
+    if action == "remove":
+        return qid, action, None
+
+    change_payload = change.get("payload")
+    if not isinstance(change_payload, dict):
+        return None
+    # payload 里的 id 可以不带（本机推送用的载荷跟班级改动同格式，不含 id）；
+    # 但要是带了，就必须和 qid 一致，防止把题目内容挂到别的题号上。
+    payload_id = change_payload.get("id")
+    if payload_id is not None and str(payload_id).strip() != qid:
+        return None
+    return qid, action, json.dumps(change_payload, ensure_ascii=False)
+
+
+@router.post("/admin/qbank/publish")
+async def publish_global_qbank_changes(request: Request) -> dict:
+    _require_admin(request)
+    payload = await _json_object(request)
+    changes = payload.get("changes")
+    if not isinstance(changes, list):
+        raise HTTPException(status_code=400, detail="changes 必须是数组")
+
+    accepted = 0
+    skipped = 0
+    last_seq = 0
+    wrote_any = False
+    now = datetime.now().isoformat(timespec="seconds")
+    database = request.app.state.database
+
+    with database.transaction() as connection:
+        for offset in range(0, len(changes), GLOBAL_QBANK_BATCH_SIZE):
+            batch = changes[offset : offset + GLOBAL_QBANK_BATCH_SIZE]
+            normalized_batch = [
+                normalized
+                for change in batch
+                if (normalized := _normalize_global_change(change)) is not None
+            ]
+            skipped += len(batch) - len(normalized_batch)
+
+            for qid, action, serialized_payload in normalized_batch:
+                database.execute(
+                    connection,
+                    """
+                    INSERT INTO global_qbank_change
+                      (seq, qid, action, payload, updated_at, pushed_by)
+                    VALUES (
+                      (
+                        SELECT COALESCE(MAX(seq), 0) + 1
+                        FROM global_qbank_change
+                      ),
+                      ?, ?, ?, ?, ?
+                    )
+                    ON CONFLICT(qid) DO UPDATE SET
+                      action = excluded.action,
+                      payload = excluded.payload,
+                      updated_at = excluded.updated_at,
+                      pushed_by = excluded.pushed_by,
+                      seq = excluded.seq
+                    """,
+                    (qid, action, serialized_payload, now, "admin"),
+                )
+                seq_row = database.fetchone(
+                    connection,
+                    "SELECT seq FROM global_qbank_change WHERE qid = ?",
+                    (qid,),
+                )
+                last_seq = int(database.row_value(seq_row, "seq") or 0)
+                wrote_any = True
+                accepted += 1
+
+        if not wrote_any:
+            seq_row = database.fetchone(
+                connection,
+                """
+                SELECT COALESCE(MAX(seq), 0) AS seq
+                FROM global_qbank_change
+                """,
+            )
+            last_seq = int(database.row_value(seq_row, "seq") or 0)
+
+    return {
+        "ok": True,
+        "accepted": accepted,
+        "skipped": skipped,
+        "seq_max": last_seq,
+    }
+
+
+@router.get("/qbank/global_seq")
+async def global_qbank_seq(request: Request) -> dict:
+    database = request.app.state.database
+    with database.connection() as connection:
+        summary = database.fetchone(
+            connection,
+            """
+            SELECT COALESCE(MAX(seq), 0) AS seq
+            FROM global_qbank_change
+            """,
+        )
+    return {
+        "ok": True,
+        "seq": int(database.row_value(summary, "seq") or 0),
+    }
+
+
+@router.get("/qbank/global_changes")
+async def global_qbank_changes(
+    request: Request,
+    since: int = 0,
+    limit: int = 500,
+) -> dict:
+    effective_limit = max(0, min(limit, 500))
+    database = request.app.state.database
+    with database.connection() as connection:
+        max_row = database.fetchone(
+            connection,
+            """
+            SELECT COALESCE(MAX(seq), 0) AS seq
+            FROM global_qbank_change
+            """,
+        )
+        rows = database.fetchall(
+            connection,
+            """
+            SELECT seq, qid, action, payload
+            FROM global_qbank_change
+            WHERE seq > ?
+            ORDER BY seq ASC
+            LIMIT ?
+            """,
+            (since, effective_limit),
+        )
+
+    return {
+        "ok": True,
+        "seq": int(database.row_value(max_row, "seq") or 0),
+        "items": [
+            {
+                "seq": int(database.row_value(row, "seq")),
+                "qid": database.row_value(row, "qid"),
+                "action": database.row_value(row, "action"),
+                "payload": _decode_payload(database.row_value(row, "payload")),
+            }
+            for row in rows
+        ],
+    }
 
 
 @router.post("/qbank/publish")
