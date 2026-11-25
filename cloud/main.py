@@ -56,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(admin_router)
     app.include_router(sync_router)
+    # This router serves both class-scoped and global qbank endpoints.
     app.include_router(qbank_router)
     app.include_router(board_router)
     app.include_router(teacher_router)
