@@ -100,6 +100,82 @@ CREATE INDEX IF NOT EXISTS idx_rebind_student
 ON device_rebind_log(class_code, student_no, ts)
 """
 
+CLASS_QBANK_CHANGE_SQLITE_DDL = """
+CREATE TABLE IF NOT EXISTS class_qbank_change (
+  seq        INTEGER PRIMARY KEY AUTO""" """INCREMENT,
+  class_code TEXT NOT NULL,
+  qid        TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  payload    TEXT,
+  updated_at TEXT NOT NULL,
+  pushed_by  TEXT
+)
+"""
+
+CLASS_QBANK_CHANGE_POSTGRES_DDL = """
+CREATE TABLE IF NOT EXISTS class_qbank_change (
+  seq        BIGSERIAL PRIMARY KEY,
+  class_code TEXT NOT NULL,
+  qid        TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  payload    TEXT,
+  updated_at TEXT NOT NULL,
+  pushed_by  TEXT
+)
+"""
+
+REPORTS_CLOUD_SQLITE_DDL = """
+CREATE TABLE IF NOT EXISTS reports_cloud (
+  id          INTEGER PRIMARY KEY AUTO""" """INCREMENT,
+  class_code  TEXT NOT NULL,
+  device_uuid TEXT NOT NULL,
+  student_no  TEXT,
+  real_name   TEXT,
+  qid         TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'other',
+  note        TEXT,
+  created_at  TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  handled     INTEGER NOT NULL DEFAULT 0,
+  handled_by  TEXT,
+  UNIQUE(class_code, device_uuid, qid, kind)
+)
+"""
+
+REPORTS_CLOUD_POSTGRES_DDL = """
+CREATE TABLE IF NOT EXISTS reports_cloud (
+  id          BIGSERIAL PRIMARY KEY,
+  class_code  TEXT NOT NULL,
+  device_uuid TEXT NOT NULL,
+  student_no  TEXT,
+  real_name   TEXT,
+  qid         TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'other',
+  note        TEXT,
+  created_at  TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  handled     INTEGER NOT NULL DEFAULT 0,
+  handled_by  TEXT,
+  UNIQUE(class_code, device_uuid, qid, kind)
+)
+"""
+
+QBANK_TABLE_DDL_STATEMENTS = (
+    (CLASS_QBANK_CHANGE_SQLITE_DDL, CLASS_QBANK_CHANGE_POSTGRES_DDL),
+    (REPORTS_CLOUD_SQLITE_DDL, REPORTS_CLOUD_POSTGRES_DDL),
+)
+
+QBANK_INDEX_DDL_STATEMENTS = (
+    """
+    CREATE INDEX IF NOT EXISTS idx_qbank_change_class_seq
+    ON class_qbank_change(class_code, seq)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reports_cloud_class
+    ON reports_cloud(class_code, handled)
+    """,
+)
+
 BACKFILL_ATTEMPTS_STUDENT_NO_SQL = """
 UPDATE attempts_cloud
 SET student_no = (
@@ -138,6 +214,13 @@ def ensure_schema(database: Database) -> None:
             else DEVICE_REBIND_LOG_POSTGRES_DDL
         )
         connection.execute(DEVICE_REBIND_LOG_INDEX_DDL)
+
+        for sqlite_ddl, postgres_ddl in QBANK_TABLE_DDL_STATEMENTS:
+            connection.execute(
+                sqlite_ddl if database.backend == "sqlite" else postgres_ddl
+            )
+        for statement in QBANK_INDEX_DDL_STATEMENTS:
+            connection.execute(statement)
 
         if database.backend == "sqlite":
             columns = [
