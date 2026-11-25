@@ -24,8 +24,15 @@ BINDING_FAILURE_WINDOW_SECONDS = 10 * 60
 REBIND_LIMIT = 3
 REBIND_WINDOW_HOURS = 24
 MAX_USE_SECONDS = 86400
+REPORT_KINDS = {
+    "kp_wrong",
+    "answer_wrong",
+    "stem_broken",
+    "image_wrong",
+    "other",
+}
 
-# 免费版 Cloud Run 按单实例渲染；多实例部署需把此计数迁移到 Redis。
+# 云端按单实例渲染；多实例部署需把此计数迁移到 Redis。
 _binding_failures: dict[str, list[float]] = {}
 _binding_failures_lock = threading.Lock()
 
@@ -125,6 +132,12 @@ async def receive_attempts(request: Request) -> dict:
     class_code = normalize_class_code(payload.get("class_code"))
     raw_device_uuid = payload.get("device_uuid")
     attempts = payload.get("attempts")
+    raw_reports = payload.get("reports")
+    reports: list[Any] = []
+    if raw_reports is not None:
+        if not isinstance(raw_reports, list):
+            raise HTTPException(status_code=400, detail="reports 必须是数组")
+        reports = raw_reports
 
     database = request.app.state.database
     with database.transaction() as connection:
@@ -372,6 +385,50 @@ async def receive_attempts(request: Request) -> dict:
             )
             accepted += max(cursor.rowcount, 0)
 
+        reports_accepted = 0
+        reports_duplicated = 0
+        report_statement = """
+            INSERT INTO reports_cloud
+              (class_code, device_uuid, student_no, real_name, qid, kind,
+               note, created_at, received_at, handled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            ON CONFLICT(class_code, device_uuid, qid, kind) DO NOTHING
+        """
+        for report in reports:
+            if not isinstance(report, dict):
+                continue
+            qid = report.get("qid")
+            if not isinstance(qid, str) or not qid.strip():
+                continue
+            raw_kind = report.get("kind")
+            kind = (
+                raw_kind
+                if isinstance(raw_kind, str) and raw_kind in REPORT_KINDS
+                else "other"
+            )
+            created_at = report.get("created_at")
+            if not isinstance(created_at, str) or not created_at.strip():
+                created_at = now
+            cursor = database.execute(
+                connection,
+                report_statement,
+                (
+                    class_code,
+                    device_uuid,
+                    student_no,
+                    real_name,
+                    qid.strip(),
+                    kind,
+                    _optional_text(report.get("note")),
+                    created_at,
+                    now,
+                ),
+            )
+            if max(int(getattr(cursor, "rowcount", 0) or 0), 0):
+                reports_accepted += 1
+            else:
+                reports_duplicated += 1
+
         if device_row is None:
             database.execute(
                 connection,
@@ -428,4 +485,6 @@ async def receive_attempts(request: Request) -> dict:
         "skipped": skipped,
         "total_received": total_received,
         "server_time": now,
+        "reports_accepted": reports_accepted,
+        "reports_duplicated": reports_duplicated,
     }
