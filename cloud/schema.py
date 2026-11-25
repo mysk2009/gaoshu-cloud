@@ -124,6 +124,30 @@ CREATE TABLE IF NOT EXISTS class_qbank_change (
 )
 """
 
+GLOBAL_QBANK_CHANGE_SQLITE_DDL = """
+CREATE TABLE IF NOT EXISTS global_qbank_change (
+  seq        INTEGER PRIMARY KEY AUTO""" """INCREMENT,
+  qid        TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  payload    TEXT,
+  updated_at TEXT NOT NULL,
+  pushed_by  TEXT,
+  UNIQUE(qid)
+)
+"""
+
+GLOBAL_QBANK_CHANGE_POSTGRES_DDL = """
+CREATE TABLE IF NOT EXISTS global_qbank_change (
+  seq        BIGSERIAL PRIMARY KEY,
+  qid        TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  payload    TEXT,
+  updated_at TEXT NOT NULL,
+  pushed_by  TEXT,
+  UNIQUE(qid)
+)
+"""
+
 REPORTS_CLOUD_SQLITE_DDL = """
 CREATE TABLE IF NOT EXISTS reports_cloud (
   id          INTEGER PRIMARY KEY AUTO""" """INCREMENT,
@@ -162,6 +186,7 @@ CREATE TABLE IF NOT EXISTS reports_cloud (
 
 QBANK_TABLE_DDL_STATEMENTS = (
     (CLASS_QBANK_CHANGE_SQLITE_DDL, CLASS_QBANK_CHANGE_POSTGRES_DDL),
+    (GLOBAL_QBANK_CHANGE_SQLITE_DDL, GLOBAL_QBANK_CHANGE_POSTGRES_DDL),
     (REPORTS_CLOUD_SQLITE_DDL, REPORTS_CLOUD_POSTGRES_DDL),
 )
 
@@ -173,6 +198,10 @@ QBANK_INDEX_DDL_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS idx_reports_cloud_class
     ON reports_cloud(class_code, handled)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_global_qbank_change_seq
+    ON global_qbank_change(seq)
     """,
 )
 
