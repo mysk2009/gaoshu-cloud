@@ -461,7 +461,13 @@
     elements["toggle-students"].textContent = (
       state.showAllStudents ? "收起" : "展开全部"
     );
-    elements["reset-submissions"]?.classList.remove("hidden");
+    // 只有存在「已交」的人才需要重置按钮；全班都未交时不该出现
+    const anySubmitted = students.some((item) => !!item.submitted);
+    if (anySubmitted) {
+      elements["reset-submissions"]?.classList.remove("hidden");
+    } else {
+      elements["reset-submissions"]?.classList.add("hidden");
+    }
   }
 
   async function setManualSubmission(studentNo, submitted) {
