@@ -13,6 +13,7 @@ from cloud.db import Database
 from cloud.export_xlsx import router as export_router
 from cloud.routes_admin import router as admin_router
 from cloud.routes_board import router as board_router
+from cloud.routes_qbank import router as qbank_router
 from cloud.routes_sync import router as sync_router
 from cloud.routes_teacher import router as teacher_router
 from cloud.schema import ensure_schema
@@ -55,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(admin_router)
     app.include_router(sync_router)
+    app.include_router(qbank_router)
     app.include_router(board_router)
     app.include_router(teacher_router)
     app.include_router(export_router)
