@@ -402,24 +402,22 @@
       const row = document.createElement("tr");
       const statusCell = document.createElement("td");
       statusCell.dataset.label = "已交";
+      const submittedByPostResetAttempts = (
+        student.submitted_by === "auto"
+        && Number(student.post_reset_count || 0) > 0
+      );
       const statusControl = document.createElement("label");
       statusControl.className = "submission-control";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = Boolean(student.submitted);
       checkbox.dataset.studentNo = student.student_no;
-      checkbox.dataset.auto = String(student.submitted_by === "auto");
-      checkbox.disabled = (
-        student.submitted_by === "auto"
-        || state.manualPending.has(student.student_no)
-      );
+      checkbox.disabled = state.manualPending.has(student.student_no);
       checkbox.setAttribute(
         "aria-label",
         `${student.real_name || student.student_no}已交`,
       );
-      if (student.submitted_by === "auto") {
-        checkbox.title = "已有作答记录，不能在这里取消";
-      } else if (state.manualPending.has(student.student_no)) {
+      if (state.manualPending.has(student.student_no)) {
         checkbox.title = "正在保存";
       }
       checkbox.addEventListener("change", () => {
@@ -434,7 +432,7 @@
         manualTag.textContent = "手工";
         statusControl.append(manualTag);
       }
-      if (student.submitted_by === "auto") {
+      if (submittedByPostResetAttempts) {
         const autoTag = document.createElement("span");
         autoTag.className = "submission-source auto";
         autoTag.textContent = "有作答";
@@ -445,7 +443,7 @@
         textCell(student.student_no, "学号"),
         textCell(student.real_name, "姓名"),
         statusCell,
-        numberCell(student.attempt_count, "作答"),
+        numberCell(student.attempt_count, "历史作答"),
         numberCell(percent(student.correct_rate), "正确率"),
         textCell(student.advice, "建议"),
       );
@@ -522,17 +520,18 @@
         elements["students-body"].querySelectorAll('input[type="checkbox"]'),
       ).find((item) => item.dataset.studentNo === studentNo);
       if (!checkbox) return;
-      checkbox.disabled = pending || checkbox.dataset.auto === "true";
+      checkbox.disabled = pending;
       checkbox.title = pending ? "正在保存" : "";
     };
 
     state.manualPending.add(studentNo);
     student.manual_submitted = submitted;
-    student.submitted = Number(student.attempt_count || 0) > 0 || submitted;
-    student.submitted_by = Number(student.attempt_count || 0) > 0
+    const hasPostResetAttempts = Number(student.post_reset_count || 0) > 0;
+    student.submitted = hasPostResetAttempts || submitted;
+    student.submitted_by = hasPostResetAttempts
       ? "auto"
       : (submitted ? "manual" : null);
-    if (!Number(student.attempt_count || 0)) {
+    if (!hasPostResetAttempts) {
       student.advice = submitted ? "已手工标记" : "还没交";
     }
     updateTotals(previousTotals, student);
